@@ -67,7 +67,7 @@ class DragEnd(MacroElement):
     _template = Template("""
 {% macro script(this, kwargs) %}
 {{ this._parent.get_name() }}.eachLayer(function (l) {
-  if (!(l instanceof L.Marker) || !l.options.draggable) return;
+  if (!(l instanceof L.Marker)) return;
   function emit(m, extra) {
     var tt = m.getTooltip();
     if (!tt) return;
@@ -76,7 +76,7 @@ class DragEnd(MacroElement):
     m.fire('click', {latlng: m.getLatLng(), sourceTarget: m, target: m});
     m.setTooltipContent(orig);
   }
-  l.on('dragend', function (e) { emit(e.target, ''); });
+  if (l.options.draggable) l.on('dragend', function (e) { emit(e.target, ''); });
   l.on('add', function () {  // champ de hauteur à côté du point
     var inp = l._icon && l._icon.querySelector('input');
     if (!inp) return;
@@ -86,7 +86,8 @@ class DragEnd(MacroElement):
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') inp.blur(); });
     inp.addEventListener('change', function () {
       if (inp.value === '' || isNaN(parseFloat(inp.value))) return;
-      emit(l, '<span style="display:none">@h:' + inp.dataset.pid + ':' + parseFloat(inp.value) + '</span>');
+      var tag = inp.dataset.side ? '@s:' + inp.dataset.side : '@h:' + inp.dataset.pid;  // côté, ou hauteur d'un point
+      emit(l, '<span style="display:none">' + tag + ':' + parseFloat(inp.value) + '</span>');
     });
   });
 });
@@ -110,6 +111,7 @@ class HoverReveal(MacroElement):
     var css = doc.createElement('style'); css.id = 'hv-css';
     css.textContent = '.hv{opacity:0;pointer-events:none!important;transition:opacity .12s}'
       + '.hv.hv-on{opacity:1;pointer-events:auto!important}'
+      + '.tt-void{display:none!important}'  // bulle vide des champs de côtés
       + '.leaflet-tooltip{opacity:0!important;transition:opacity .15s}'  // les bulles ne s'affichent qu'après 2 s d'immobilité
       + '.leaflet-tooltip.tt-on{opacity:1!important}';
     doc.head.appendChild(css);
@@ -243,6 +245,11 @@ def search(text):
 @st.cache_data(show_spinner=False)
 def roofs(lat, lon, radius=50):
     return geo.roofs_around(lat, lon, radius)
+
+
+@st.cache_data(show_spinner=False)
+def pvgis_best(lat, lon, loss):
+    return pv.pvgis_optimal(lat, lon, loss)
 
 
 @st.cache_data(show_spinner=False)
@@ -588,15 +595,24 @@ def handle_drag(out) -> bool:
     tip = (out or {}).get("last_object_clicked_tooltip") or ""
     pos = (out or {}).get("last_object_clicked")
     m = re.search(r"@([cohfp]):(\d+):(-?[\d.]+)\s*@drag", tip)
-    if not m or not pos:
+    side = re.search(r"@s:(\d+):(\d+):(-?[\d.]+)\s*@drag", tip)
+    if not (m or side) or not pos:
         return False
     key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), round(pos["lat"], 7),
            round(pos["lng"], 7))
     if st.session_state.get("last_drag") == key:  # déjà traité lors d'une exécution précédente
         return False
     st.session_state.last_drag = key
-    kind, a = m.group(1), int(m.group(2))
     lon, lat = pos["lng"], pos["lat"]
+    if side:  # longueur d'un côté saisie sur la carte : le pan s'étire
+        face = next((f for f in custom if f["id"] == int(side.group(1))), None)
+        if face is None or int(side.group(2)) >= len(face["pids"]):
+            return False
+        resize_side(face, int(side.group(2)), max(float(side.group(3)), 0.2))
+        st.session_state.z_ver += 1
+        sync_custom()
+        return True
+    kind, a = m.group(1), int(m.group(2))
     if kind == "h":  # hauteur saisie dans le champ à côté du point a
         if a not in st.session_state.points:
             return False
@@ -658,6 +674,28 @@ def handle_drag(out) -> bool:
         st.toast(t("obstacle_moved_off"), icon=":material/roofing:")
         return True  # la carte est redessinée avec l'ancienne position
     obstacles[a].update(lon=lon, lat=lat, face_id=hit["id"])
+    return True
+
+
+def handle_delete_click(out) -> bool:
+    """Clic simple sur le ✕ d'un pan dessiné ou d'un obstacle : il est supprimé."""
+    tip = (out or {}).get("last_object_clicked_tooltip") or ""
+    m = re.search(r"@([xy]):(\d+):0", tip)
+    if not m or "@drag" in tip:
+        return False
+    key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), "x")
+    if st.session_state.get("last_xclick") == key:
+        return False
+    st.session_state.last_xclick = key
+    target = int(m.group(2))
+    if m.group(1) == "x":
+        if not any(f["id"] == target for f in custom):  # déjà supprimé : rien à faire (évite de boucler)
+            return False
+        delete_drawn(target)
+    else:
+        if not any(o.get("uid") == target for o in st.session_state.obstacles):
+            return False
+        remove_obstacle(target)
     return True
 
 
@@ -786,58 +824,6 @@ with sb_tool:
     st.markdown(f"**{t('tool')}**")
     tool = st.radio(t("tool"), TOOLS, format_func=lambda k: tr(f"tool_{k}"), key="tool_sel",
                     label_visibility="collapsed", help=t("tool_help") + " " + t("draw_help"))
-with draw_slot:
-    if tool == "draw":
-        st.info(t("draw_steps"), icon=":material/draw:")
-        st.caption(t("hover_hint"))
-        sync_custom()
-        act = next((f for f in custom if f["id"] == st.session_state.active_face), None)
-        if not custom:
-            st.caption(t("drawn_none"))
-        elif act is None:
-            st.caption(t("pick_drawn"))
-        else:  # seul le pan en cours de modification a ses points, hauteurs et côtés
-            pts = st.session_state.points
-            used = list(act["pids"])
-            st.markdown(f"**{act['name']}** · {act['area']:.0f} m² · {act['tilt']:.0f}° · {orientation(act['azimuth'])}")
-            st.caption(t("corner_heights"))
-            ed = st.data_editor(
-                pd.DataFrame({t("col_height"): [pts[p][2] for p in used]},
-                             index=[f"{t('corner')} {p}" for p in used]),
-                key=f"pts-{lang()}-{st.session_state.z_ver}-{act['id']}-{'-'.join(map(str, used))}", width="stretch",
-                column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
-            for p, v in zip(used, ed[t("col_height")]):
-                if pd.notna(v) and abs(float(v) - pts[p][2]) > 1e-9:
-                    pts[p][2] = float(v)
-            sync_custom()
-            f = act
-            with st.expander(f"{t('sides_title')} · {f['name']}", expanded=True):
-                st.caption(t("sides_help"))
-                w0, l0 = geo.face_dimensions(f)  # largeur le long du faîte, longueur dans la pente
-                sig = f"{w0:.2f}-{l0:.2f}"  # la clé suit la géométrie : après un déplacement, la saisie repart de la valeur réelle
-                dc1, dc2 = st.columns(2)
-                w_new = dc1.number_input(t("col_width"), 0.3, 300.0, round(w0, 1), 0.1, key=f"fw-{f['id']}-{lang()}-{sig}")
-                l_new = dc2.number_input(t("col_length"), 0.3, 300.0, round(l0, 1), 0.1, key=f"fl-{f['id']}-{lang()}-{sig}")
-                if abs(w_new - round(w0, 1)) > 0.04 or abs(l_new - round(l0, 1)) > 0.04:
-                    resize_face(f, w_new / w0, l_new / l0)
-                    sync_custom()
-                    st.session_state.z_ver += 1
-                ids = f["pids"]
-                lens = [side_length(ids[i], ids[(i + 1) % len(ids)]) for i in range(len(ids))]
-                col = t("side_len")
-                ed_s = st.data_editor(
-                    pd.DataFrame({col: [round(x, 2) for x in lens]},
-                                 index=[f"{t('side')} {i + 1} ({ids[i]} → {ids[(i + 1) % len(ids)]})"
-                                        for i in range(len(ids))]),
-                    # la clé suit la géométrie : après un déplacement, les saisies d'avant ne sont pas rejouées
-                    key=f"sides-{f['id']}-{lang()}-{'-'.join(f'{x:.2f}' for x in lens)}", width="stretch",
-                    column_config={col: st.column_config.NumberColumn(min_value=0.2, max_value=300, step=0.05)})
-                for i, (old, new) in enumerate(zip(lens, ed_s[col])):
-                    if pd.notna(new) and abs(float(new) - round(old, 2)) > 0.004:  # un côté modifié à la fois
-                        resize_side(f, i, float(new))
-                        sync_custom()
-                        st.session_state.z_ver += 1
-                        break
 sync_custom()  # inclinaison et orientation déduites des hauteurs des coins
 
 try:
@@ -989,8 +975,6 @@ with sb_obst:
                 e1, e2 = st.columns(2)
                 ob["w"] = e1.number_input(t("obst_w"), 0.1, 10.0, step=0.05, key=f"ow-{uid}")
                 ob["l"] = e2.number_input(t("obst_l"), 0.1, 10.0, step=0.05, key=f"ol-{uid}")
-                st.button(t("obst_move"), icon=":material/open_with:", key=f"om-{uid}", on_click=edit_obstacle,
-                          args=(uid,), width="stretch")
                 st.button(t("obst_delete"), icon=":material/delete:", key=f"od-{uid}", on_click=remove_obstacle,
                           args=(uid,), width="stretch")
         st.button(t("obst_clear", n=len(obs_list)), icon=":material/delete_sweep:", on_click=obs_list.clear,
@@ -1007,16 +991,22 @@ def recenter():
 
 
 with sb_drawn:
+    if tool == "draw":
+        st.caption(t("draw_short"))
     if custom:
         st.markdown(f"**{t('sb_drawn')}**")
         for f in custom:
-            r1, r2, r3 = st.columns([4, 1, 1], vertical_alignment="center")
-            name = f"**{f['name']}**" if f["id"] == st.session_state.active_face else f["name"]
-            r1.markdown(f"{name} · {f['area']:.0f} m²")
-            r2.button(" ", icon=":material/edit:", key=f"sbedit-{f['id']}", on_click=edit_face, args=(f["id"],),
-                      help=t("drawn_edit"))
-            r3.button(" ", icon=":material/delete:", key=f"sbdel-{f['id']}", on_click=delete_drawn, args=(f["id"],),
-                      help=t("drawn_delete"))
+            with st.expander(f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])}"):
+                w0, l0 = geo.face_dimensions(f)  # largeur le long du faîte, longueur dans la pente
+                sig = f"{w0:.2f}-{l0:.2f}"  # la clé suit la géométrie : après un déplacement, la saisie repart de la valeur réelle
+                w_new = st.number_input(t("col_width"), 0.3, 300.0, round(w0, 1), 0.1, key=f"fw-{f['id']}-{lang()}-{sig}")
+                l_new = st.number_input(t("col_length"), 0.3, 300.0, round(l0, 1), 0.1, key=f"fl-{f['id']}-{lang()}-{sig}")
+                if abs(w_new - round(w0, 1)) > 0.04 or abs(l_new - round(l0, 1)) > 0.04:
+                    resize_face(f, w_new / w0, l_new / l0)
+                    sync_custom()
+                    st.session_state.z_ver += 1
+                st.button(t("drawn_delete"), icon=":material/delete:", key=f"sbdel-{f['id']}", on_click=delete_drawn,
+                          args=(f["id"],), width="stretch")
         st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", key="sb-drawn-clear",
                   on_click=delete_drawn, width="stretch")
 with sb_map:
@@ -1238,22 +1228,35 @@ with map_slot:
             ).add_to(dyn)
         for f in custom:
             pp = [st.session_state.points[p] for p in f["pids"]]
-            folium.Marker(
-                [sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)], draggable=True,
+            cy, cx = sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)
+            folium.Marker(  # ✥ : glisser tout le pan
+                [cy, cx], draggable=True,
                 tooltip=(f"{f['name']} ({t('slide_hint')})" f'<span style="display:none">@f:{f["id"]}:0</span>'),
                 icon=folium.DivIcon(icon_size=(26, 26), icon_anchor=(13, 13), class_name=f"hv g-{f['id']}", html=(
                     f'<div style="width:26px;height:26px;border-radius:50%;background:{CUSTOM};color:#14171c;'
                     'font:700 16px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:grab;'
                     'box-shadow:0 0 4px rgba(0,0,0,.7)">✥</div>')),
             ).add_to(dyn)
-            for i, p in enumerate(f["pids"]):  # longueur réelle de chaque côté, au milieu du côté
+            folium.Marker(  # ✕ : supprimer le pan (un simple clic)
+                [cy, cx],
+                tooltip=(f"{t('drawn_delete')}" f'<span style="display:none">@x:{f["id"]}:0</span>'),
+                icon=folium.DivIcon(icon_size=(26, 26), icon_anchor=(-8, 13), class_name=f"hv g-{f['id']}", html=(
+                    '<div style="width:26px;height:26px;border-radius:50%;background:#d9534f;color:#fff;'
+                    'font:700 14px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:pointer;'
+                    'box-shadow:0 0 4px rgba(0,0,0,.7)">✕</div>')),
+            ).add_to(dyn)
+            for i, p in enumerate(f["pids"]):  # longueur réelle de chaque côté, modifiable, au milieu du côté
                 q = f["pids"][(i + 1) % len(f["pids"])]
                 (x1, y1, _), (x2, y2, _) = st.session_state.points[p], st.session_state.points[q]
                 folium.Marker(
-                    [(y1 + y2) / 2, (x1 + x2) / 2], interactive=False,
-                    icon=folium.DivIcon(icon_size=(60, 16), icon_anchor=(30, 8), class_name=f"hv g-{f['id']}", html=(
-                        '<div style="text-align:center;font:600 11px Inter,sans-serif;color:#fff;'
-                        f'text-shadow:0 0 3px #000,0 0 3px #000">{side_length(p, q):.2f} m</div>')),
+                    [(y1 + y2) / 2, (x1 + x2) / 2],
+                    tooltip=folium.Tooltip("", className="tt-void"),
+                    icon=folium.DivIcon(icon_size=(84, 20), icon_anchor=(42, 10), class_name=f"hv g-{f['id']}", html=(
+                        f'<input type="number" step="0.05" min="0.2" value="{side_length(p, q):.2f}" '
+                        f'data-side="{f["id"]}:{i}" title="{t("side_len")}" '
+                        'style="width:70px;height:18px;box-sizing:border-box;padding:0 3px;border-radius:4px;'
+                        'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
+                        '<span style="font:600 11px Inter,sans-serif;color:#fff;text-shadow:0 0 3px #000"> m</span>')),
                 ).add_to(dyn)
     for fid, lst in (st.session_state.manual.items() if show and tool == "panels" else []):  # poignées des panneaux
         for p in (lst if fid in fe_by_id else []):
@@ -1282,6 +1285,14 @@ with map_slot:
                 f'<div style="width:18px;height:18px;border-radius:50%;background:{OBSTACLE};border:2px solid #fff;'
                 'box-shadow:0 0 3px rgba(0,0,0,.7);cursor:grab"></div>')),
         ).add_to(dyn)
+        folium.Marker(  # ✕ : supprimer l'obstacle (un simple clic)
+            [ob["lat"], ob["lon"]],
+            tooltip=(f"{t('obst_delete')}" f'<span style="display:none">@y:{ob["uid"]}:0</span>'),
+            icon=folium.DivIcon(icon_size=(22, 22), icon_anchor=(-8, 11), class_name=f"hv g-o{ob['uid']}", html=(
+                '<div style="width:22px;height:22px;border-radius:50%;background:#d9534f;color:#fff;'
+                'font:700 12px/20px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:pointer;'
+                'box-shadow:0 0 3px rgba(0,0,0,.7)">✕</div>')),
+        ).add_to(dyn)
     dyn.add_child(DragEnd())  # en dernier : les marqueurs doivent déjà exister
     dyn.add_child(HoverReveal(hover))  # cache les poignées, numéros et mesures tant qu'on ne survole pas le pan
     out = st_folium(fmap, feature_group_to_add=dyn, height=MAP_HEIGHT, use_container_width=True,
@@ -1291,7 +1302,7 @@ with map_slot:
     if out and out.get("center") and out.get("zoom"):  # vue actuelle, pour recréer la carte au même endroit
         st.session_state.live_view = {"center": [out["center"]["lat"], out["center"]["lng"]], "zoom": out["zoom"]}
     st.caption(t("map_note"))
-    changed = handle_drawings(out) or handle_drag(out) or handle_panel_click(out, tool) or handle_click(out, tool)
+    changed = handle_drawings(out) or handle_drag(out) or handle_panel_click(out, tool) or handle_delete_click(out)         or handle_click(out, tool)
     if out and valid_bounds(out.get("bounds")):  # les toits se chargent autour de la vue, sans cliquer
         st.session_state.live_bounds = out["bounds"]
         if (out.get("zoom") or 0) >= 17:
@@ -1303,6 +1314,13 @@ with map_slot:
         st.rerun()
 
 # ---- Étape 5 : production ---------------------------------------------------------------------
+RATING_STEPS = ((0.95, 5), (0.90, 4), (0.80, 3), (0.65, 2))  # part du rendement optimal -> classe (5 = excellente)
+
+
+def rating(ratio: float) -> int:
+    return next((k for limit, k in RATING_STEPS if ratio >= limit), 1)
+
+
 with tab5:
     kwp = sum(a["kwp"] for a in arrays)
     if not st.session_state.show_panels:
@@ -1312,12 +1330,15 @@ with tab5:
         st.session_state.pop("system", None)
         st.info(t("pick_face"), icon=":material/solar_power:")
     else:
+        active = [a for a in arrays if a["kwp"] > 0]
         try:
             with st.spinner(t("loading_pvgis")):
-                monthly = sum(pvgis(round(lat, 4), round(lon, 4), a["tilt"], a["azimuth"], loss) * a["kwp"]
-                              for a in arrays if a["kwp"] > 0)
+                per_face = [pvgis(round(lat, 4), round(lon, 4), a["tilt"], a["azimuth"], loss) * a["kwp"]
+                            for a in active]
+                best = pvgis_best(round(lat, 4), round(lon, 4), loss)
         except ApiError as e:
             fail(e)
+        monthly = sum(per_face)
         annual = monthly.sum()
         panels = sum(a["panels"] for a in arrays)
         st.session_state.system = {"lat": lat, "lon": lon, "loss": loss, "kwp": kwp, "annual": annual,
@@ -1327,6 +1348,28 @@ with tab5:
         m[1].metric(t("m_power"), f"{kwp:.1f} {t('unit_kwp')}")
         m[2].metric(t("m_specific"), f"{kwh(annual / kwp)} kWh/{t('unit_kwp')}")
         m[3].metric(t("m_panels"), f"≈ {panels}")
+
+        # Évaluation : rendement (kWh par kWc) comparé au meilleur cas possible à cet endroit
+        ratio = annual / (kwp * best["yield"])
+        grade = rating(ratio)
+        verdict = (f"**{t('eval_title')} : {klass(grade)}** · "
+                   + t("eval_text", pct=f"{ratio:.0%}", y=kwh(best["yield"]), tilt=best["tilt"],
+                       orient=orientation(best["azimuth"])))
+        (st.success if grade >= 4 else st.info if grade == 3 else st.warning)(verdict, icon=":material/star:")
+        rows = []
+        for a, series in zip(active, per_face):
+            spec = series.sum() / a["kwp"]
+            rows.append({t("col_face"): a["label"], t("col_orient"): orientation(a["azimuth"]),
+                         t("col_tilt"): f"{a['tilt']:.0f}°", t("m_panels"): a["panels"],
+                         t("m_power"): round(a["kwp"], 2), t("col_kwh"): round(series.sum()),
+                         t("col_spec"): round(spec), t("col_pct"): round(100 * spec / best["yield"]),
+                         t("col_eval"): klass(rating(spec / best["yield"]))})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                     column_config={t("col_pct"): st.column_config.NumberColumn(format="%d %%"),
+                                    t("col_kwh"): st.column_config.NumberColumn(format="%d"),
+                                    t("col_spec"): st.column_config.NumberColumn(format="%d")})
+        st.caption(t("eval_note", lim=" · ".join(f"{klass(k)} ≥ {lim:.0%}" for lim, k in RATING_STEPS)))
+
         fig = go.Figure(go.Bar(x=months(), y=monthly.values, marker_color=BLUE,
                                hovertemplate="%{x} : %{y:,.0f} kWh<extra></extra>"))
         st.plotly_chart(style(fig, t("c_monthly_avg"), t("y_month")), width="stretch")

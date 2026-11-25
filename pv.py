@@ -70,3 +70,17 @@ def hourly_by_year(lat: float, lon: float, tilt: float, azimuth: float, loss: fl
     t_cell = df["t"] + df["gti"] * NOCT_FACTOR
     kw = df["gti"] / 1000 * (1 + TEMP_COEF * (t_cell - 25)) * (1 - loss / 100)
     return kw.clip(lower=0).rename("kWh")
+
+
+def pvgis_optimal(lat: float, lon: float, loss: float) -> dict:
+    """Meilleur cas à cet endroit selon PVGIS (inclinaison et orientation optimales, pans fixes, sans ombrage) :
+    rendement annuel en kWh par kWc, inclinaison et orientation (0 = sud). Sert de référence à l'évaluation."""
+    data = get_json(
+        f"{PVGIS}/PVcalc",
+        {"lat": round(lat, 4), "lon": round(lon, 4), "peakpower": 1, "loss": loss, "optimalangles": 1,
+         "outputformat": "json"},
+        source="PVGIS",
+    )
+    mount = data["inputs"]["mounting_system"]["fixed"]
+    return {"yield": data["outputs"]["totals"]["fixed"]["E_y"], "tilt": mount["slope"]["value"],
+            "azimuth": mount["azimuth"]["value"]}
