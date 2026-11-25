@@ -114,5 +114,5 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
 
 ## Diffusion
 
-10. Héberger l'app (Streamlit Community Cloud, dépôt privé), puis créer une vitrine publique
-    `Solar-Price-Showcase` avec description et lien, comme pour d_neutral et Immeuble-Site.
+10. Dépôt rendu public le 2026-11-25 après audit (aucun secret ni information personnelle, historique compris).
+    Reste à déployer l'app (Streamlit Community Cloud, connexion GitHub requise) et à mettre le lien dans le README.

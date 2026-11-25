@@ -645,23 +645,11 @@ TEXT = {
         "Open-Meteo: meteo oraria reale (rianalisi ERA5) fino all'anno scorso, per l'analisi anno per anno.",
         "Open-Meteo: actual hourly weather (ERA5 reanalysis) up to last year, for the year-by-year analysis.",
     ),
-    "method_text": (
-        "Simple : chaque pan coché est couvert à la part choisie, la puissance découle de la surface et de la "
-        "densité des panneaux. Détaillé : le nombre de panneaux est calculé sur les dimensions de chaque pan, en "
-        "portrait ou en paysage. La production est calculée pour 1 kWc par pan puis multipliée par sa puissance.",
-        "Einfach: Jede gewählte Fläche wird zum gewählten Anteil belegt, die Leistung ergibt sich aus Fläche und "
-        "Moduldichte. Detailliert: Die Modulanzahl wird aus den Massen jeder Fläche berechnet, hoch oder quer. Die "
-        "Produktion wird pro Fläche für 1 kWp berechnet und mit deren Leistung multipliziert.",
-        "Semplice: ogni falda scelta è coperta per la quota indicata, la potenza deriva da superficie e densità dei "
-        "pannelli. Dettagliata: il numero di pannelli è calcolato dalle dimensioni di ogni falda, in verticale o in "
-        "orizzontale. La produzione è calcolata per 1 kWp per falda e moltiplicata per la sua potenza.",
-        "Simple: each ticked face is covered at the chosen share, power follows from area and panel density. "
-        "Detailed: the number of panels is computed from each face's dimensions, portrait or landscape. Production "
-        "is computed for 1 kWp per face, then multiplied by its power.",
+    "method_text": ("Chaque pan choisi est rempli de panneaux dans son contour réel du cadastre solaire (marge au bord réglable, dégagement de 10 cm autour des obstacles), ou garni à la main. Largeur, longueur, inclinaison, orientation et hauteurs d'un pan peuvent être corrigées, et les pans mal détectés redessinés. La production vient de PVGIS (moyenne 2005-2023, pertes système réglables, 14 % par défaut), calculée pour 1 kWc par pan puis multipliée par la puissance posée. Limites : pas d'ombrage (arbres, bâtiments voisins), obstacles du toit non détectés automatiquement, pas encore de prix de l'électricité. Estimation indicative, qui ne remplace pas l'étude d'un installateur.",
+        'Jede gewählte Fläche wird innerhalb ihres tatsächlichen Umrisses im Solarkataster mit Modulen belegt (einstellbarer Randabstand, 10 cm Abstand um Hindernisse) oder von Hand bestückt. Breite, Länge, Neigung, Ausrichtung und Höhen einer Fläche können korrigiert und schlecht erkannte Flächen neu gezeichnet werden. Die Produktion stammt von PVGIS (Mittel 2005-2023, einstellbare Systemverluste, standardmässig 14 %), berechnet für 1 kWp pro Fläche und mit der installierten Leistung multipliziert. Grenzen: keine Verschattung (Bäume, Nachbargebäude), Dachhindernisse werden nicht automatisch erkannt, noch keine Strompreise. Richtwert, ersetzt keine Planung durch einen Installateur.',
+        "Ogni falda scelta è riempita di pannelli entro il suo contorno reale nel catasto solare (margine regolabile, 10 cm di distanza attorno agli ostacoli) oppure completata a mano. Larghezza, lunghezza, inclinazione, orientamento e altezze di una falda si possono correggere e le falde rilevate male si possono ridisegnare. La produzione proviene da PVGIS (media 2005-2023, perdite di sistema regolabili, 14 % per impostazione predefinita), calcolata per 1 kWp per falda e moltiplicata per la potenza installata. Limiti: nessun ombreggiamento (alberi, edifici vicini), ostacoli del tetto non rilevati automaticamente, ancora nessun prezzo dell'elettricità. Stima indicativa, non sostituisce lo studio di un installatore.",
+        "Each picked face is filled with panels inside its real outline from the solar cadastre (adjustable edge margin, 10 cm clearance around obstacles), or laid out by hand. A face's width, length, tilt, orientation and heights can be corrected, and badly detected faces redrawn. Production comes from PVGIS (2005-2023 average, adjustable system losses, 14 % by default), computed for 1 kWp per face then multiplied by the installed power. Limits: no shading (trees, neighbouring buildings), roof obstacles are not detected automatically, no electricity prices yet. Indicative estimate; it does not replace an installer's study.",
     ),
-}
-
-MONTHS = {
     "fr": ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"],
     "de": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
     "it": ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"],
