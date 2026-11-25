@@ -117,6 +117,35 @@ def ring_area(ring) -> float:
     return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2
 
 
+def _local(ring):
+    lon0, lat0 = ring[0]
+    k = math.cos(math.radians(lat0)) * M_PER_DEG_LAT
+    return [((x - lon0) * k, (y - lat0) * M_PER_DEG_LAT) for x, y in ring]
+
+
+def plane_heights(ring, tilt: float, azimuth: float) -> list[float]:
+    """Hauteur (m) de chaque sommet pour un plan d'inclinaison et d'orientation donnés : le point le plus
+    bas du contour est à 0, le reste monte vers le haut de la pente."""
+    a = math.radians(azimuth)
+    down = (-math.sin(a), -math.cos(a))  # direction de la pente, vers le bas
+    d = [x * down[0] + y * down[1] for x, y in _local(ring)]
+    return [round((max(d) - v) * math.tan(math.radians(tilt)), 2) for v in d]
+
+
+def plane_tilt_azimuth(ring, heights) -> tuple[float, float | None]:
+    """Plan z = a·x + b·y + c ajusté (moindres carrés) sur les sommets et leurs hauteurs : renvoie
+    (inclinaison en °, orientation en ° avec 0 = sud, ou None si le plan est horizontal)."""
+    import numpy as np
+
+    pts = np.array(_local(ring))
+    design = np.c_[pts, np.ones(len(pts))]
+    (a, b, _), *_ = np.linalg.lstsq(design, np.array(heights, dtype=float), rcond=None)
+    slope = math.hypot(a, b)
+    if slope < 1e-4:
+        return 0.0, None
+    return math.degrees(math.atan(slope)), math.degrees(math.atan2(a, b))  # la pente descend vers (-a, -b)
+
+
 def face_dimensions(face: dict) -> tuple[float, float]:
     """Dimensions approximatives du pan (largeur le long du faîte, longueur dans la pente), en m.
 

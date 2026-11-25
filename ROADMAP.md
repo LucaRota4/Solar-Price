@@ -25,6 +25,11 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
 - Obstacles (fenêtre de toit, cheminée, autre) posés au clic, les panneaux les évitent (10 cm de dégagement)
 - Décalage du champ de panneaux d'un pan par pas de 25 cm, avec aimantation (bords, centre, obstacles)
 - Pans dessinés à la main (toits en croix mal détectés), nombre de panneaux voulu ou remplissage automatique
+- Carte stable : les couches qui bougent n'obligent plus à recharger la carte, la vue ne saute plus ; zoom
+  jusqu'à 23 (au-delà de 20, l'image est agrandie)
+- Pans dessinés : panneau d'aide à l'outil « Dessiner un pan » (étapes, hauteur de chaque coin, suppression
+  d'un pan ou de tous) ; l'inclinaison et l'orientation viennent du plan passant par les coins
+- Hauteur du bas et du haut de chaque pan dans le tableau : modifier le haut recalcule l'inclinaison
 - Légende de l'aptitude du toit en bas à gauche de la carte
 
 ## À reprendre plus tard (retiré de la page pour l'instant)
@@ -33,7 +38,9 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
   (`hourly_by_year`) et dans l'historique git (commit 011b4a3, views/estimate.py).
 - **Glisser-déposer réel** d'un panneau ou d'un groupe sur la carte : demande un composant JS personnalisé
   (streamlit-folium ne renvoie pas les déplacements) ; aujourd'hui : flèches avec aimantation.
-- **Hauteur du pan** : saisie mais pas encore utilisée, à brancher sur l'ombrage.
+- **Hauteurs des pans** : elles servent à calculer l'inclinaison ; leur usage pour l'ombrage (obstacles, pans voisins
+  plus hauts) reste à faire.
+- Pans dessinés : accrochage des coins sur les coins des pans voisins (toits en croix), sans retracer.
 - **Découpage final des sections** : le parcours complet d'abord, puis on organise ce que voit l'utilisateur
   (ne pas le charger de tout dès le début).
 - Pas de panneaux individuels sélectionnables ni de tailles de panneaux différentes sur un même pan.

@@ -81,21 +81,23 @@ legend.addTo({{ this._parent.get_name() }});
                      + "".join(row.format(c=c, label=label) for c, label in items))
 
 
-def base_map(center, zoom, legend=True, draw=False):
+def base_map(center, zoom, legend=True, draw=False, bounds=None):
     """Carte limitée à la Suisse : vue aérienne swisstopo (par défaut) ou plan avec rues et numéros,
     au choix dans la carte. Boussole, sans échelle."""
-    fmap = folium.Map(location=center, zoom_start=zoom, min_zoom=7, max_zoom=21, tiles=None, control_scale=False,
+    fmap = folium.Map(location=center, zoom_start=zoom, min_zoom=7, max_zoom=23, tiles=None, control_scale=False,
                       max_bounds=True, min_lat=45.4, max_lat=48.2, min_lon=5.4, max_lon=11.0)
     folium.TileLayer(SWISSIMAGE, attr="© swisstopo", name=t("map_satellite"), max_native_zoom=20,
-                     max_zoom=21).add_to(fmap)
+                     max_zoom=23).add_to(fmap)
     folium.TileLayer(OSM_PLAN, attr="© OpenStreetMap", name=t("map_plan"), max_native_zoom=19,
-                     max_zoom=21, show=False).add_to(fmap)
+                     max_zoom=23, show=False).add_to(fmap)
     folium.LayerControl(position="topleft", collapsed=False).add_to(fmap)
     Compass().add_to(fmap)
     if draw:  # polygones et rectangles seulement, sans les boutons d'édition ni de suppression
         Draw(draw_options={"polyline": False, "circle": False, "marker": False, "circlemarker": False,
                            "polygon": {"shapeOptions": {"color": CUSTOM}}, "rectangle": {"shapeOptions": {"color": CUSTOM}}},
              edit_options={"edit": False, "remove": False}).add_to(fmap)
+    if bounds:
+        fmap.fit_bounds(bounds, padding=(30, 30))
     if legend:
         items = [(CLASS_COLORS[k], klass(k)) for k in range(1, 6)]
         Legend(items + [(PANEL, t("legend_panels")), (OBSTACLE, t("legend_obstacle"))],
@@ -165,6 +167,8 @@ st.session_state.setdefault("sel_faces", [])  # pans choisis (ids), dans l'ordre
 st.session_state.setdefault("ctx_building", None)  # maison affichée avant le choix des pans
 st.session_state.setdefault("show_panels", False)  # les panneaux ne sont posés qu'après « Suivant »
 st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
+st.session_state.setdefault("epoch", 0)  # change quand il faut recréer la carte (efface le tracé en cours)
+st.session_state.setdefault("custom_n", 0)
 st.session_state.setdefault("shifts", {})  # face_id -> décalage (s, d) en m du champ de panneaux
 
 
@@ -226,7 +230,8 @@ def handle_click(out, tool) -> bool:
 
 
 def handle_drawings(out) -> bool:
-    """Polygones tracés avec l'outil de dessin -> nouveaux pans (une seule fois par tracé)."""
+    """Polygones tracés avec l'outil de dessin -> nouveaux pans (une seule fois par tracé). La carte est
+    recréée ensuite (epoch) pour effacer le tracé de l'outil : le pan est redessiné par l'application."""
     new = False
     for feat in (out or {}).get("all_drawings") or []:
         geom = feat.get("geometry", {})
@@ -239,12 +244,22 @@ def handle_drawings(out) -> bool:
         if len(ring) < 3 or sig in seen_drawings:
             continue
         seen_drawings.add(sig)
-        n = len(custom) + 1
+        st.session_state.custom_n += 1
+        n = st.session_state.custom_n
+        # Départ : pente de 30° plein sud, hauteurs des coins modifiables ensuite
         custom.append({"id": CUSTOM_ID0 + n, "building_id": -1, "ring": ring, "tilt": 30.0, "azimuth": 0.0,
-                       "klasse": 0, "irradiation": 0.0, "area": geo.ring_area(ring) / math.cos(math.radians(30)),
+                       "z": geo.plane_heights(ring, 30, 0), "klasse": 0, "irradiation": 0.0, "area": 0.0,
                        "custom": True, "name": f"{t('drawn_face')} {n}"})
         new = True
+    if new:
+        st.session_state.epoch += 1
     return new
+
+
+def delete_drawn(fid=None):
+    """Supprime un pan dessiné (ou tous) et recrée la carte pour effacer son tracé."""
+    custom[:] = [f for f in custom if fid is not None and f["id"] != fid]
+    st.session_state.epoch += 1
 
 
 @st.dialog(t("switch_title"))
@@ -271,6 +286,7 @@ def reset_roof():
     st.session_state.obstacles.clear()
     st.session_state.shifts.clear()
     st.session_state.custom_faces.clear()
+    st.session_state.epoch += 1
     st.session_state.show_panels = False
 
 
@@ -301,6 +317,40 @@ if not loc:
         st.rerun()
     st.stop()
 
+tr = t_fixed()
+# Outil de la carte et panneau de dessin : au-dessus de la carte, créés ici pour connaître l'outil tout de suite
+tool_slot, draw_slot, map_c = st.container(), st.container(), st.container()
+with tool_slot:
+    tool = st.segmented_control(t("tool"), ["house", "faces", "draw", "add", "del"],
+                                format_func=lambda k: tr(f"tool_{k}"), default="house", key="tool_sel",
+                                help=t("tool_help") + " " + t("draw_help")) or "house"
+with draw_slot:
+    if tool == "draw":
+        st.info(t("draw_steps"), icon=":material/draw:")
+        if not custom:
+            st.caption(t("drawn_none"))
+        for f in custom:
+            f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
+            if az is not None:
+                f["azimuth"] = az
+            f["area"] = geo.ring_area(f["ring"]) / max(math.cos(math.radians(f["tilt"])), 0.2)
+            with st.expander(f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])}"):
+                st.caption(t("corner_heights"))
+                ed = st.data_editor(
+                    pd.DataFrame({t("col_hb"): f["z"]}, index=[f"{t('corner')} {i}" for i in range(1, len(f["z"]) + 1)]),
+                    key=f"z-{f['id']}-{lang()}", width="stretch",
+                    column_config={t("col_hb"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
+                f["z"] = [float(v) for v in ed[t("col_hb")]]
+                st.button(t("drawn_delete"), icon=":material/delete:", key=f"del-{f['id']}", on_click=delete_drawn,
+                          args=(f["id"],))
+        if custom:
+            st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", on_click=delete_drawn)
+for f in custom:  # inclinaison et orientation déduites des hauteurs des coins
+    f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
+    if az is not None:
+        f["azimuth"] = az
+    f["area"] = geo.ring_area(f["ring"]) / max(math.cos(math.radians(f["tilt"])), 0.2)
+
 try:
     near = roofs(loc["lat"], loc["lon"])  # tous les toits dans le périmètre autour du lieu sélectionné
 except ApiError as e:
@@ -309,7 +359,6 @@ store.update({f["id"]: f for f in near})
 store.update({f["id"]: f for f in custom})
 faces = list(store.values())
 buildings = geo.buildings_by_distance(near, loc["lat"], loc["lon"])
-tr = t_fixed()
 
 # Maison affichée : celle des pans choisis, sinon celle sur laquelle on a cliqué, sinon celle sous l'adresse
 present = {f["building_id"] for f in faces}
@@ -396,7 +445,7 @@ def preselect_best():
 
 # Page : carte, puis les étapes en onglets. Les onglets sont tous exécutés, donc les réglages d'une étape
 # restent quand on en regarde une autre ; « Suivant » ouvre l'onglet suivant.
-map_slot = st.container()
+map_slot = map_c
 tab1, tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 6)], key=STEP_KEY, on_change=lambda: None)
 
 with tab1:
@@ -444,32 +493,37 @@ arrays = []  # un dict par pan équipé : tilt, azimuth, kwp, panels, face_id, l
 with tab2:
     st.caption(f"{t('step2_note')} {t('faces_picked', n=len(bfaces))}")
     st.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best)
-    inc, wid, lng, tilt, ori, hgt = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
-                                                    "col_orient_deg", "col_height"))
-    dims0, rows, index = {}, [], []
+    inc, wid, lng, tilt, ori, hb, ht = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
+                                                       "col_orient_deg", "col_hb", "col_ht"))
+    dims0, heights0, rows, index = {}, {}, [], []
     for f in bfaces:
         dims0[f["id"]] = geo.face_dimensions(f)
+        run = dims0[f["id"]][1] * math.cos(math.radians(round(f["tilt"])))  # profondeur horizontale du pan
+        bottom = round(min(f["z"]), 2) if f.get("z") else 0.0
+        heights0[f["id"]] = (bottom, round(bottom + run * math.tan(math.radians(round(f["tilt"]))), 2))
         rows.append({inc: f["on"], wid: dims0[f["id"]][0], lng: dims0[f["id"]][1], tilt: round(f["tilt"]),
-                     ori: round(f["azimuth"]), hgt: 0.0, "face_id": f["id"]})
+                     ori: round(f["azimuth"]), hb: heights0[f["id"]][0], ht: heights0[f["id"]][1],
+                     "face_id": f["id"]})
         index.append(f["row"])
     if not rows and not any(f["building_id"] in shown for f in faces):  # rien de détecté : un pan à la main, sans position sur la carte
-        rows.append({inc: True, wid: 10.0, lng: 6.0, tilt: 30, ori: 0, hgt: 0.0, "face_id": None})
+        rows.append({inc: True, wid: 10.0, lng: 6.0, tilt: 30, ori: 0, hb: 0.0, ht: 3.2, "face_id": None})
         index.append(f"{t('col_face')} 1")
     edited = st.data_editor(
-        pd.DataFrame(rows, index=index, columns=[inc, wid, lng, tilt, ori, hgt, "face_id"]), width="stretch", num_rows="dynamic", key=f"faces-{sel_key}-{lang()}",
+        pd.DataFrame(rows, index=index, columns=[inc, wid, lng, tilt, ori, hb, ht, "face_id"]), width="stretch", num_rows="dynamic", key=f"faces-{sel_key}-{lang()}",
         column_config={
             inc: st.column_config.CheckboxColumn(default=True),
             wid: st.column_config.NumberColumn(min_value=0.5, max_value=200, step=0.1, default=8.0),
             lng: st.column_config.NumberColumn(min_value=0.5, max_value=100, step=0.1, default=5.0),
             tilt: st.column_config.NumberColumn(min_value=0, max_value=90, step=1, default=30),
             ori: st.column_config.NumberColumn(min_value=-180, max_value=180, step=1, default=0),
-            hgt: st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1, default=0.0,
-                                               help=t("col_height_help")),
+            hb: st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1, default=0.0,
+                                              help=t("heights_help")),
+            ht: st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1, default=3.2,
+                                              help=t("heights_help")),
             "face_id": None,
         },
     )
-    if custom:
-        st.button(t("drawn_clear", n=len(custom)), icon=":material/delete:", on_click=custom.clear)
+    by_heights = []  # pans dont l'inclinaison vient des hauteurs saisies
     next_button(3, show=True, disabled=not bfaces)
     by_id = {f["id"]: f for f in bfaces}
     for name, r in edited.dropna(subset=[wid, lng, tilt, ori]).iterrows():
@@ -481,13 +535,23 @@ with tab2:
             arrays.append({"tilt": r[tilt], "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
                            "face_id": None, "layout": [], "label": str(name), "quality": 0})
             continue
-        fe = {**f, "tilt": r[tilt], "azimuth": r[ori]}  # la grille suit l'inclinaison et l'orientation saisies
+        tilt_eff = r[tilt]
+        hb0, ht0 = heights0[f["id"]]
+        if pd.notna(r[hb]) and pd.notna(r[ht]) and (abs(r[hb] - hb0) > 0.005 or abs(r[ht] - ht0) > 0.005):
+            run = max(r[lng] * math.cos(math.radians(r[tilt])), 0.1)  # profondeur horizontale du pan
+            tilt_eff = min(math.degrees(math.atan2(max(r[ht] - r[hb], 0), run)), 90)
+            by_heights.append(f"{f['label']} {tilt_eff:.0f}°")
+        fe = {**f, "tilt": tilt_eff, "azimuth": r[ori]}  # la grille suit l'inclinaison et l'orientation
         w0, l0 = dims0[f["id"]]
         edited_dims = abs(r[wid] - w0) > 0.05 or abs(r[lng] - l0) > 0.05
         # Dimensions inchangées : disposition réelle dans le contour ; modifiées : on recalcule le nombre
         layout, n = place(fe, fit_panels(r[wid], r[lng], panel_w, panel_l, margin) if edited_dims else None)
-        arrays.append({"tilt": r[tilt], "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
+        arrays.append({"tilt": tilt_eff, "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
                        "face_id": f["id"], "layout": layout, "label": f["label"], "quality": f["irradiation"]})
+
+if by_heights:
+    with tab2:
+        st.caption(t("tilt_from_heights", rows=", ".join(by_heights)))
 
 # Nombre de panneaux voulu : on remplit d'abord les pans les mieux ensoleillés
 capacity = sum(a["panels"] for a in arrays)
@@ -525,40 +589,51 @@ with tab4:
 
 # ---- Carte : vue aérienne swisstopo --------------------------------------------------------------
 with map_slot:
-    tool = st.segmented_control(t("tool"), ["house", "faces", "draw", "add", "del"], format_func=lambda k: tr(f"tool_{k}"),
-                                default="house", key="tool_sel", help=t("tool_help") + "\n\n" + t("draw_help")
-                                ) or "house"
     show = st.session_state.show_panels
     equipped = {a["face_id"] for a in arrays if a["kwp"] > 0} if show else set(sel_ids)
-    fmap = base_map([lat, lon], 20, draw=tool == "draw")
+    # Les couches qui bougent (pans, panneaux, obstacles) vont dans un groupe ajouté à la carte sans la
+    # recréer : la vue ne bouge plus. La carte n'est recréée que si la maison change, ou pour effacer un
+    # tracé (epoch) ; la vue courante est alors conservée.
+    fit_sig = tuple(shown)
+    state = (lang(), fit_sig, st.session_state.epoch, tool == "draw")
+    prev = st.session_state.get("map_state")
+    if prev != state:
+        st.session_state.map_state = state
+        st.session_state.base_view = st.session_state.get("live_view") if prev and prev[1] == fit_sig else None
+    view = st.session_state.get("base_view")
+    pts = [(y, x) for f in faces if f["building_id"] in shown for x, y in f["ring"]]
+    bounds = [[min(p[0] for p in pts), min(p[1] for p in pts)],
+              [max(p[0] for p in pts), max(p[1] for p in pts)]] if pts and not view else None
+    fmap = base_map(view["center"] if view else [lat, lon], view["zoom"] if view else 20, draw=tool == "draw",
+                    bounds=bounds)
+    dyn = folium.FeatureGroup(name="dyn", control=False)
     for f in faces:
         is_custom = f.get("custom", False)
         mine = is_custom or f["building_id"] in shown
         fill = PANEL if f["id"] in equipped else CUSTOM if is_custom else CLASS_COLORS[f["klasse"]]
-        tip = (f"{f['name']} · {f['area']:.0f} m²" if is_custom else
+        tip = (f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}°" if is_custom else
                f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}")
         folium.Polygon(
             [(y, x) for x, y in f["ring"]],
             color=CUSTOM if is_custom else "#ffffff", weight=1.4 if mine else 0.6, fill=True, fill_color=fill,
             fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.28, tooltip=tip,
             interactive=tool != "draw",
-        ).add_to(fmap)
+        ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
-                           fill_color="#16233a", fill_opacity=0.92, interactive=False).add_to(fmap)
+                           fill_color="#16233a", fill_opacity=0.92, interactive=False).add_to(dyn)
     for ob in st.session_state.obstacles:
         folium.Polygon([(y, x) for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)], color="#ffffff",
                        weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9,
-                       tooltip=f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", interactive=False).add_to(fmap)
-    pts = [(y, x) for f in faces if f["building_id"] in shown or f.get("custom") for x, y in f["ring"]]
-    if pts:
-        fmap.fit_bounds([[min(p[0] for p in pts), min(p[1] for p in pts)],
-                         [max(p[0] for p in pts), max(p[1] for p in pts)]], padding=(30, 30))
-    out = st_folium(fmap, height=MAP_HEIGHT, use_container_width=True,
-                    returned_objects=["last_clicked", "all_drawings"], key="roofmap")
+                       tooltip=f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", interactive=False).add_to(dyn)
+    out = st_folium(fmap, feature_group_to_add=dyn, height=MAP_HEIGHT, use_container_width=True,
+                    returned_objects=["last_clicked", "all_drawings", "center", "zoom"],
+                    key=f"roofmap-{st.session_state.epoch}-{lang()}-{tool == 'draw'}")
+    if out and out.get("center") and out.get("zoom"):  # vue actuelle, pour recréer la carte au même endroit
+        st.session_state.live_view = {"center": [out["center"]["lat"], out["center"]["lng"]], "zoom": out["zoom"]}
     st.caption(t("map_note"))
-    if (tool == "draw" and handle_drawings(out)) or handle_click(out, tool):
+    if handle_drawings(out) or handle_click(out, tool):
         st.rerun()
 
 # ---- Étape 5 : production ---------------------------------------------------------------------
