@@ -3,7 +3,9 @@
 Récapitulatif des idées discutées, pas encore faites. À relire avant chaque nouvelle étape.
 Les règles métier marquées « à vérifier » doivent être confirmées avant d'être affichées.
 
-## Fait (étape 1)
+## Fait
+
+Étape 1, terminée le 2026-11-25 :
 
 - Adresse ou clic sur n'importe quel toit de la carte, toits chargés dans un rayon de 50 m (cadastre solaire)
 - Carte de la Suisse par défaut, vue satellite ou plan, boussole

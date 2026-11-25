@@ -14,11 +14,17 @@ métier). Réponds en français.
 ## Stack
 - Python + Streamlit (une seule app, lancée avec `streamlit run app.py`)
 - requests, pandas, plotly
-- Tout tourne en local (http://localhost:8501)
+- Tout tourne en local sur http://localhost:8502 (le port 8501 sert à un autre projet) :
+  `.venv\Scripts\python.exe -m streamlit run app.py --server.port 8502`
+- Après une modification de i18n.py, geo.py ou pv.py, redémarrer le serveur : Streamlit ne
+  recharge pas toujours les modules importés.
 
-## Idées en attente
-Toutes les idées discutées mais pas encore faites sont dans ROADMAP.md. Le lire avant chaque
-nouvelle étape, et y ajouter toute nouvelle idée que Luca mentionne « pour plus tard ».
+## À chaque session (obligatoire)
+1. Au début : lire ROADMAP.md pour savoir ce qui est fait et ce qui reste.
+2. Pendant : dès que Luca mentionne une idée « pour plus tard », l'ajouter à ROADMAP.md dans la
+   bonne section, sans attendre la fin.
+3. Quand une chose est terminée et testée : la déplacer dans « Fait » de ROADMAP.md, avec la date.
+4. À la fin de chaque étape : commiter et pousser sur GitHub (le code a déjà été perdu une fois).
 
 ## Étapes (on avance dans l'ordre, une à la fois)
 1. Production (fait, voir app.py, geo.py, pv.py) : l'utilisateur entre son
