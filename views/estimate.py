@@ -59,21 +59,35 @@ compass.addTo({{ this._parent.get_name() }});
 
 
 class DragEnd(MacroElement):
-    """Quand on lâche un marqueur déplaçable, déclenche un « clic » à sa nouvelle position. streamlit-folium
-    renvoie à Python la position et l'infobulle du dernier objet cliqué : on y ajoute un texte caché « @drag »
-    pour distinguer un glissement d'un vrai clic, puis on remet l'infobulle d'origine."""
+    """Marqueurs déplaçables : quand on en lâche un, ou quand on valide la hauteur saisie dans son champ, déclenche
+    un « clic » sur le marqueur. streamlit-folium renvoie à Python la position et l'infobulle du dernier objet
+    cliqué : on y ajoute un texte caché (« @drag », et « @h:id:valeur » pour une hauteur) pour distinguer ces
+    gestes d'un vrai clic, puis on remet l'infobulle d'origine."""
 
     _template = Template("""
 {% macro script(this, kwargs) %}
 {{ this._parent.get_name() }}.eachLayer(function (l) {
   if (!(l instanceof L.Marker) || !l.options.draggable) return;
-  l.on('dragend', function (e) {
-    var m = e.target, tt = m.getTooltip();
+  function emit(m, extra) {
+    var tt = m.getTooltip();
     if (!tt) return;
     var orig = tt.getContent();
-    m.setTooltipContent(orig + '<span style="display:none">@drag</span>');
+    m.setTooltipContent(orig + extra + '<span style="display:none">@drag</span>');
     m.fire('click', {latlng: m.getLatLng(), sourceTarget: m, target: m});
     m.setTooltipContent(orig);
+  }
+  l.on('dragend', function (e) { emit(e.target, ''); });
+  l.on('add', function () {  // champ de hauteur à côté du point
+    var inp = l._icon && l._icon.querySelector('input');
+    if (!inp) return;
+    ['mousedown', 'touchstart', 'click', 'dblclick', 'keydown', 'keyup', 'wheel'].forEach(function (ev) {
+      L.DomEvent.on(inp, ev, L.DomEvent.stopPropagation);  // ni glissement du point ni de la carte en tapant
+    });
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') inp.blur(); });
+    inp.addEventListener('change', function () {
+      if (inp.value === '' || isNaN(parseFloat(inp.value))) return;
+      emit(l, '<span style="display:none">@h:' + inp.dataset.pid + ':' + parseFloat(inp.value) + '</span>');
+    });
   });
 });
 {% endmacro %}
@@ -323,13 +337,40 @@ def neighbor_z(lon, lat, exclude=(), main=None, drawn_only=False):
     return None
 
 
+def side_length(a, b) -> float:
+    """Longueur réelle (3D, hauteurs comprises) du côté entre les points a et b."""
+    pts = st.session_state.points
+    h = geo.dist_m(pts[a][0], pts[a][1], pts[b][0], pts[b][1])
+    return math.hypot(h, pts[b][2] - pts[a][2])
+
+
+def resize_side(f, i, length):
+    """Donne au côté i (du point i au point i+1) du pan dessiné f la longueur réelle `length` : les hauteurs restent
+    fixes, le côté s'allonge ou se raccourcit à l'horizontale et tous les points de son côté du pan suivent
+    (un rectangle reste un rectangle). Les points partagés entraînent les pans voisins."""
+    pts, ids = st.session_state.points, f["pids"]
+    a, b = ids[i], ids[(i + 1) % len(ids)]
+    k = math.cos(math.radians(pts[a][1])) * geo.M_PER_DEG_LAT
+    vx, vy = (pts[b][0] - pts[a][0]) * k, (pts[b][1] - pts[a][1]) * geo.M_PER_DEG_LAT
+    h = math.hypot(vx, vy)
+    if h < 1e-6:
+        return
+    h_new = math.sqrt(max(length ** 2 - (pts[b][2] - pts[a][2]) ** 2, 0.04))  # au moins 20 cm à l'horizontale
+    ux, uy = vx / h, vy / h
+    proj = lambda p: (pts[p][0] - pts[a][0]) * k * ux + (pts[p][1] - pts[a][1]) * geo.M_PER_DEG_LAT * uy  # noqa: E731
+    centre = sum(proj(p) for p in ids) / len(ids)
+    for p in {b} | {p for p in ids if p != a and proj(p) > centre}:
+        pts[p][0] += ux * (h_new - h) / k
+        pts[p][1] += uy * (h_new - h) / geo.M_PER_DEG_LAT
+
+
 def handle_drag(out) -> bool:
     """Coin d'un pan dessiné ou obstacle déplacé à la main (poignée lâchée ailleurs). True si on a bougé quelque
     chose. Un coin lâché près d'un coin d'un autre pan fusionne avec lui (aimantation) : un seul point, une seule
     hauteur."""
     tip = (out or {}).get("last_object_clicked_tooltip") or ""
     pos = (out or {}).get("last_object_clicked")
-    m = re.search(r"@([co]):(\d+):(\d+)\s*@drag", tip)
+    m = re.search(r"@([coh]):(\d+):(-?[\d.]+)\s*@drag", tip)
     if not m or not pos:
         return False
     key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), round(pos["lat"], 7),
@@ -339,6 +380,13 @@ def handle_drag(out) -> bool:
     st.session_state.last_drag = key
     kind, a = m.group(1), int(m.group(2))
     lon, lat = pos["lng"], pos["lat"]
+    if kind == "h":  # hauteur saisie dans le champ à côté du point a
+        if a not in st.session_state.points:
+            return False
+        st.session_state.points[a][2] = float(m.group(3))
+        st.session_state.z_ver += 1
+        sync_custom()
+        return True
     if kind == "c":  # point a
         pts = st.session_state.points
         if a not in pts:
@@ -505,6 +553,24 @@ with draw_slot:
                         f"{t('corner')} {', '.join(map(str, f['pids']))}")
             c2.button(" ", icon=":material/delete:", key=f"del-{f['id']}", help=t("drawn_delete"),
                       on_click=delete_drawn, args=(f["id"],), width="stretch")
+            with st.expander(f"{t('sides_title')} · {f['name']}"):
+                st.caption(t("sides_help"))
+                ids = f["pids"]
+                lens = [side_length(ids[i], ids[(i + 1) % len(ids)]) for i in range(len(ids))]
+                col = t("side_len")
+                ed_s = st.data_editor(
+                    pd.DataFrame({col: [round(x, 2) for x in lens]},
+                                 index=[f"{t('side')} {i + 1} ({ids[i]} → {ids[(i + 1) % len(ids)]})"
+                                        for i in range(len(ids))]),
+                    # la clé suit la géométrie : après un déplacement, les saisies d'avant ne sont pas rejouées
+                    key=f"sides-{f['id']}-{lang()}-{'-'.join(f'{x:.2f}' for x in lens)}", width="stretch",
+                    column_config={col: st.column_config.NumberColumn(min_value=0.2, max_value=300, step=0.05)})
+                for i, (old, new) in enumerate(zip(lens, ed_s[col])):
+                    if pd.notna(new) and abs(float(new) - round(old, 2)) > 0.004:  # un côté modifié à la fois
+                        resize_side(f, i, float(new))
+                        sync_custom()
+                        st.session_state.z_ver += 1
+                        break
         st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", on_click=delete_drawn)
 sync_custom()  # inclinaison et orientation déduites des hauteurs des coins
 
@@ -783,15 +849,30 @@ with map_slot:
             weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
             fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
-    for pid, (x, y, z) in st.session_state.points.items():  # points des pans dessinés, numérotés, à glisser
+    for pid, (x, y, z) in st.session_state.points.items():  # points des pans dessinés : numéro, hauteur modifiable
         folium.Marker(
             [y, x], draggable=True,
             tooltip=(f"{t('corner')} {pid} · {z:.2f} m ({t('drag_hint')})"
                      f'<span style="display:none">@c:{pid}:0</span>'),
-            icon=folium.DivIcon(icon_size=(20, 20), icon_anchor=(10, 10), html=(
-                f'<div style="width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
-                f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff;cursor:grab">{pid}</div>')),
+            icon=folium.DivIcon(icon_size=(96, 22), icon_anchor=(11, 11), html=(
+                '<div style="display:flex;align-items:center;gap:4px">'
+                f'<div style="flex:none;width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff;cursor:grab">{pid}</div>'
+                f'<input type="number" step="0.1" value="{z:.2f}" data-pid="{pid}" title="{t("col_height")}" '
+                'style="width:62px;height:20px;box-sizing:border-box;padding:0 3px;border-radius:4px;'
+                'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
+                '</div>')),
         ).add_to(dyn)
+    for f in custom:  # longueur réelle de chaque côté, au milieu du côté
+        for i, p in enumerate(f["pids"]):
+            q = f["pids"][(i + 1) % len(f["pids"])]
+            (x1, y1, _), (x2, y2, _) = st.session_state.points[p], st.session_state.points[q]
+            folium.Marker(
+                [(y1 + y2) / 2, (x1 + x2) / 2], interactive=False,
+                icon=folium.DivIcon(icon_size=(60, 16), icon_anchor=(30, 8), html=(
+                    '<div style="text-align:center;font:600 11px Inter,sans-serif;color:#fff;'
+                    f'text-shadow:0 0 3px #000,0 0 3px #000">{side_length(p, q):.2f} m</div>')),
+            ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,

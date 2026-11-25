@@ -36,6 +36,9 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
   l'orientation en sont déduites (plan passant par les coins)
 - Coins des pans dessinés : poignées à glisser sur la carte (le pan et les calculs suivent), obstacles aussi
   (poignée au centre, l'obstacle passe sur le pan sous la nouvelle position)
+- Hauteur de chaque point éditable directement sur la carte (champ à côté du point) et longueur réelle de chaque
+  côté affichée sur la carte ; tableau « Côtés » par pan : corriger une longueur étire le pan dans cette direction
+  (hauteurs fixes, un rectangle reste un rectangle)
 - Coins partagés : un coin posé ou lâché à moins de 60 cm d'un coin d'un autre pan fusionne avec lui (un seul point,
   une seule hauteur) ; hauteurs de départ recalées sur les toits voisins (pans dessinés, puis pan du cadastre sous
   le tracé), avec la pente du pan remplacé conservée
