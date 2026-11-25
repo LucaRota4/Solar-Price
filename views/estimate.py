@@ -94,6 +94,85 @@ class DragEnd(MacroElement):
 """)
 
 
+class HoverReveal(MacroElement):
+    """Révèle au survol les marqueurs d'un pan dessiné (points, hauteurs, côtés, poignée) ou d'un obstacle : ils
+    existent tous mais restent cachés (classe « hv »). `groups` : identifiant du groupe -> contour [[lat, lng], ...] ;
+    les marqueurs du groupe portent la classe « g-<identifiant> ». Le survol est calculé sur la position de la souris
+    (le contour n'a pas besoin d'être cliquable, donc le tracé d'un nouveau pan n'est pas gêné). Les marqueurs restent
+    visibles tant qu'on les survole, qu'on en déplace un, ou qu'on tape dans un champ de hauteur."""
+
+    _template = Template("""
+{% macro script(this, kwargs) %}
+(function () {
+  var map = {{ this._parent._parent.get_name() }};
+  var root = map.getContainer(), doc = root.ownerDocument;
+  if (!doc.getElementById('hv-css')) {
+    var css = doc.createElement('style'); css.id = 'hv-css';
+    css.textContent = '.hv{opacity:0;pointer-events:none!important;transition:opacity .12s}'
+      + '.hv.hv-on{opacity:1;pointer-events:auto!important}';
+    doc.head.appendChild(css);
+  }
+  var old = window.__hv;  // la couche est recréée à chaque mise à jour : on retire les anciens écouteurs
+  if (old) {
+    map.off('mousemove', old.move); map.off('draw:drawstart', old.ds); map.off('draw:drawstop', old.dp);
+    root.removeEventListener('mouseover', old.over, true); root.removeEventListener('mousedown', old.down, true);
+    doc.removeEventListener('mouseup', old.up, true); clearTimeout(old.s.timer);
+  }
+  var groups = {{ this.groups|tojson }};
+  var s = {cur: null, timer: null, busy: false, drawing: false};
+  function show(g) {
+    s.cur = g;
+    root.querySelectorAll('.hv').forEach(function (el) { el.classList.toggle('hv-on', el.classList.contains('g-' + g)); });
+  }
+  function hide() {
+    s.cur = null;
+    root.querySelectorAll('.hv-on').forEach(function (el) { el.classList.remove('hv-on'); });
+  }
+  function inside(ring, lat, lng) {
+    var c = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var yi = ring[i][0], xi = ring[i][1], yj = ring[j][0], xj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) c = !c;
+    }
+    return c;
+  }
+  function schedule() {
+    if (s.timer) return;
+    s.timer = setTimeout(function () {
+      s.timer = null;
+      var a = doc.activeElement;
+      if (s.busy || (a && a.closest && a.closest('.hv'))) { schedule(); return; }
+      hide();
+    }, 400);
+  }
+  function move(e) {
+    if (s.drawing) return;
+    var hit = null;
+    for (var g in groups) { if (inside(groups[g], e.latlng.lat, e.latlng.lng)) { hit = g; break; } }
+    if (hit) { clearTimeout(s.timer); s.timer = null; if (hit !== s.cur) show(hit); }
+    else if (s.cur) schedule();
+  }
+  function over(e) {
+    if (s.cur && e.target.closest && e.target.closest('.hv')) { clearTimeout(s.timer); s.timer = null; }
+  }
+  function down(e) { if (e.target.closest && e.target.closest('.hv')) s.busy = true; }
+  function up() { s.busy = false; }
+  function ds() { s.drawing = true; hide(); }
+  function dp() { s.drawing = false; }
+  map.on('mousemove', move); map.on('draw:drawstart', ds); map.on('draw:drawstop', dp);
+  root.addEventListener('mouseover', over, true); root.addEventListener('mousedown', down, true);
+  doc.addEventListener('mouseup', up, true);
+  window.__hv = {move: move, ds: ds, dp: dp, over: over, down: down, up: up, s: s};
+})();
+{% endmacro %}
+""")
+
+    def __init__(self, groups):
+        super().__init__()
+        self._name = "HoverReveal"
+        self.groups = groups
+
+
 class Legend(MacroElement):
     """Légende en bas à gauche : couleur de l'aptitude du toit (cadastre solaire), pans équipés, obstacles."""
 
@@ -698,6 +777,7 @@ with sb_tool:
 with draw_slot:
     if tool == "draw":
         st.info(t("draw_steps"), icon=":material/draw:")
+        st.caption(t("hover_hint"))
         sync_custom()
         act = next((f for f in custom if f["id"] == st.session_state.active_face), None)
         if not custom:
@@ -1123,41 +1203,46 @@ with map_slot:
             weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
             fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
-    act_face = next((f for f in custom if f["id"] == st.session_state.active_face), None) if tool == "draw" else None
-    for pid, (x, y, z) in ({p: st.session_state.points[p] for p in act_face["pids"]} if act_face else {}).items():  # points du pan actif
-        folium.Marker(
-            [y, x], draggable=True,
-            tooltip=(f"{t('corner')} {pid} · {z:.2f} m ({t('drag_hint')})"
-                     f'<span style="display:none">@c:{pid}:0</span>'),
-            icon=folium.DivIcon(icon_size=(96, 22), icon_anchor=(11, 11), html=(
-                '<div style="display:flex;align-items:center;gap:4px">'
-                f'<div style="flex:none;width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
-                f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff;cursor:grab">{pid}</div>'
-                f'<input type="number" step="0.1" value="{z:.2f}" data-pid="{pid}" title="{t("col_height")}" '
-                'style="width:62px;height:20px;box-sizing:border-box;padding:0 3px;border-radius:4px;'
-                'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
-                '</div>')),
-        ).add_to(dyn)
-    for f in ([act_face] if act_face else []):  # poignée au centre du pan actif : on le glisse d'un bloc
-        pp = [st.session_state.points[p] for p in f["pids"]]
-        folium.Marker(
-            [sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)], draggable=True,
-            tooltip=(f"{f['name']} ({t('slide_hint')})" f'<span style="display:none">@f:{f["id"]}:0</span>'),
-            icon=folium.DivIcon(icon_size=(26, 26), icon_anchor=(13, 13), html=(
-                f'<div style="width:26px;height:26px;border-radius:50%;background:{CUSTOM};color:#14171c;'
-                'font:700 16px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:grab;'
-                'box-shadow:0 0 4px rgba(0,0,0,.7)">✥</div>')),
-        ).add_to(dyn)
-    for f in ([act_face] if act_face else []):  # longueur réelle de chaque côté du pan actif, au milieu du côté
-        for i, p in enumerate(f["pids"]):
-            q = f["pids"][(i + 1) % len(f["pids"])]
-            (x1, y1, _), (x2, y2, _) = st.session_state.points[p], st.session_state.points[q]
+    hover = {}  # groupe -> contour [[lat, lng], ...] : les marqueurs du groupe n'apparaissent qu'au survol de ce contour
+    if tool == "draw":  # pans dessinés : points numérotés (hauteur modifiable), poignée, longueur des côtés
+        used_pts = {p for f in custom for p in f["pids"]}
+        for f in custom:
+            hover[str(f["id"])] = [[y, x] for x, y in f["ring"]]
+        for pid in sorted(used_pts):
+            x, y, z = st.session_state.points[pid]
+            groups = " ".join(f"g-{f['id']}" for f in custom if pid in f["pids"])
             folium.Marker(
-                [(y1 + y2) / 2, (x1 + x2) / 2], interactive=False,
-                icon=folium.DivIcon(icon_size=(60, 16), icon_anchor=(30, 8), html=(
-                    '<div style="text-align:center;font:600 11px Inter,sans-serif;color:#fff;'
-                    f'text-shadow:0 0 3px #000,0 0 3px #000">{side_length(p, q):.2f} m</div>')),
+                [y, x], draggable=True,
+                tooltip=(f"{t('corner')} {pid} · {z:.2f} m ({t('drag_hint')})"
+                         f'<span style="display:none">@c:{pid}:0</span>'),
+                icon=folium.DivIcon(icon_size=(96, 22), icon_anchor=(11, 11), class_name=f"hv {groups}", html=(
+                    '<div style="display:flex;align-items:center;gap:4px">'
+                    f'<div style="flex:none;width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                    f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff;cursor:grab">{pid}</div>'
+                    f'<input type="number" step="0.1" value="{z:.2f}" data-pid="{pid}" title="{t("col_height")}" '
+                    'style="width:62px;height:20px;box-sizing:border-box;padding:0 3px;border-radius:4px;'
+                    'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
+                    '</div>')),
             ).add_to(dyn)
+        for f in custom:
+            pp = [st.session_state.points[p] for p in f["pids"]]
+            folium.Marker(
+                [sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)], draggable=True,
+                tooltip=(f"{f['name']} ({t('slide_hint')})" f'<span style="display:none">@f:{f["id"]}:0</span>'),
+                icon=folium.DivIcon(icon_size=(26, 26), icon_anchor=(13, 13), class_name=f"hv g-{f['id']}", html=(
+                    f'<div style="width:26px;height:26px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                    'font:700 16px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:grab;'
+                    'box-shadow:0 0 4px rgba(0,0,0,.7)">✥</div>')),
+            ).add_to(dyn)
+            for i, p in enumerate(f["pids"]):  # longueur réelle de chaque côté, au milieu du côté
+                q = f["pids"][(i + 1) % len(f["pids"])]
+                (x1, y1, _), (x2, y2, _) = st.session_state.points[p], st.session_state.points[q]
+                folium.Marker(
+                    [(y1 + y2) / 2, (x1 + x2) / 2], interactive=False,
+                    icon=folium.DivIcon(icon_size=(60, 16), icon_anchor=(30, 8), class_name=f"hv g-{f['id']}", html=(
+                        '<div style="text-align:center;font:600 11px Inter,sans-serif;color:#fff;'
+                        f'text-shadow:0 0 3px #000,0 0 3px #000">{side_length(p, q):.2f} m</div>')),
+                ).add_to(dyn)
     for fid, lst in (st.session_state.manual.items() if show and tool == "panels" else []):  # poignées des panneaux
         for p in (lst if fid in fe_by_id else []):
             folium.Marker(
@@ -1174,17 +1259,19 @@ with map_slot:
     for k, ob in enumerate(st.session_state.obstacles):
         folium.Polygon([(y, x) for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)], color="#ffffff",
                        weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9, interactive=False).add_to(dyn)
-        if tool != "add" or ob["uid"] != st.session_state.active_obst:
-            continue  # la poignée n'existe que pour l'obstacle actif
-        folium.Marker(  # poignée au centre, à glisser pour déplacer l'obstacle
+        if tool != "add":
+            continue  # pas de poignée avec un autre outil
+        hover[f"o{ob['uid']}"] = [[y, x] for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)]
+        folium.Marker(  # poignée au centre, à glisser pour déplacer l'obstacle ; visible au survol de l'obstacle
             [ob["lat"], ob["lon"]], draggable=True,
             tooltip=(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m ({t('drag_hint')})"
                      f'<span style="display:none">@o:{k}:0</span>'),
-            icon=folium.DivIcon(icon_size=(18, 18), icon_anchor=(9, 9), html=(
+            icon=folium.DivIcon(icon_size=(18, 18), icon_anchor=(9, 9), class_name=f"hv g-o{ob['uid']}", html=(
                 f'<div style="width:18px;height:18px;border-radius:50%;background:{OBSTACLE};border:2px solid #fff;'
                 'box-shadow:0 0 3px rgba(0,0,0,.7);cursor:grab"></div>')),
         ).add_to(dyn)
     dyn.add_child(DragEnd())  # en dernier : les marqueurs doivent déjà exister
+    dyn.add_child(HoverReveal(hover))  # cache les poignées, numéros et mesures tant qu'on ne survole pas le pan
     out = st_folium(fmap, feature_group_to_add=dyn, height=MAP_HEIGHT, use_container_width=True,
                     returned_objects=["last_clicked", "all_drawings", "center", "zoom", "bounds", "last_object_clicked",
                                       "last_object_clicked_tooltip", "last_object_clicked_count"],
