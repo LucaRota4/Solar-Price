@@ -20,7 +20,8 @@ métier). Réponds en français.
   recharge pas toujours les modules importés.
 
 ## À chaque session (obligatoire)
-1. Au début : lire ROADMAP.md pour savoir ce qui est fait et ce qui reste.
+1. Au début : lire ROADMAP.md pour savoir ce qui est fait et ce qui reste. Ce fichier est local et ignoré par git :
+   ne jamais le commiter ni le publier, et ne pas le citer en détail dans le README ni les messages de commit.
 2. Pendant : dès que Luca mentionne une idée « pour plus tard », l'ajouter à ROADMAP.md dans la
    bonne section, sans attendre la fin.
 3. Quand une chose est terminée et testée : la déplacer dans « Fait » de ROADMAP.md, avec la date.

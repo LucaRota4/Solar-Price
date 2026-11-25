@@ -1,35 +1,38 @@
 # Solar Price
 
-**How much does a solar roof really earn in Switzerland?** Installers quote an average yield. But the sun produces most at noon, when everybody's panels produce, and that is when electricity is cheapest, sometimes negative. Solar Price aims to show what that mismatch costs a homeowner, in energy and in money.
+> **Work in progress.** Only the first step is built and usable today: a production estimate for a real Swiss roof. The rest of what this project is meant to do is described below as *planned*. Numbers are indicative and have not been validated against measured production yet.
 
-It is a personal project by [Luca Rota](https://github.com/LucaRota4). It runs entirely on free public data, with no account and no API key.
+**An estimate of what a solar roof produces in Switzerland, aiming to be more precise than a typical installer's quote.**
 
-## Status
+A quote usually starts from a generic yield for a "south-facing roof" and a rounded surface. This project instead works from the actual roof: every face has its own size, tilt and orientation, obstacles take room away from the panels, and the production of each face is computed on its own. At the end of the project it will also show what the timing of that production is worth, because the sun produces most when every other roof does too, which is when electricity is cheapest, sometimes negative.
 
-| Step | What | State |
-|---|---|---|
-| 1 | Production estimate from a real roof | **Done** (this is what you can try today) |
-| 2 | Hourly market prices, capture rate, energy sold at negative prices | Planned |
-| 3 | Tariff scenarios: quarterly feed-in today, quarter-hourly from 2027, curtailment | Planned |
-| 4 | Battery and self-consumption | Planned |
+It is a personal project by [Luca Rota](https://github.com/LucaRota4). It runs on free public data, with no account and no API key.
 
-The detailed list of ideas and what is next is in [ROADMAP.md](ROADMAP.md).
-
-## What step 1 does
+## What it can do today
 
 - **Find the roof.** Type an address (suggestions appear while you type) or click the map. Roofs load around the view as you browse, from the Swiss solar cadastre (sonnendach.ch).
 - **Pick faces.** Click the roof faces to equip, from any building. Width, length, tilt, orientation and heights come from the cadastre and can all be corrected; the panel count adapts.
-- **Redraw what is wrong.** A cross roof or a missing face? Draw the face yourself. Each corner is a draggable point with its own height; tilt and orientation follow from the heights. Corners that land close to each other merge, new heights are inferred from neighbouring roofs, and you can set the real length of every side.
-- **Panels.** Faces are filled automatically inside their real outline (edge margin, panel size and power adjustable). Or switch a face to hand placement: drag panels around with snapping, add and remove them.
-- **Obstacles.** Roof windows, chimneys or custom sizes. Panels avoid them, and you can move, resize and delete them.
-- **Production.** Yearly and monthly yield from PVGIS, with the assumptions shown next to the numbers.
-- French, German, Italian and English.
+- **Redraw what is wrong.** A cross roof or a missing face? Draw it yourself. Each corner is a draggable point with its own height, and tilt and orientation follow from the heights. Corners that land close to each other merge, new heights are inferred from the neighbouring roofs, and you can set the real length of every side or slide the whole face.
+- **Place the panels.** Faces are filled automatically inside their real outline (edge margin, panel size and power adjustable). Or switch a face to hand placement: drag panels around with snapping, add them and remove them.
+- **Account for obstacles.** Roof windows, chimneys or custom sizes. Panels avoid them, and you can move, resize and delete them.
+- **Estimate the production.** Yearly and monthly yield from PVGIS for each face with its own tilt and orientation, with the assumptions shown next to the numbers.
+- Available in French, German, Italian and English.
+
+## What it will be able to do when it is finished (planned, not built yet)
+
+- **Value, not only energy.** Hourly Swiss market prices, the share of the production that is worth less than average (capture rate), the energy sold at low or negative prices, and the resulting loss in CHF.
+- **Tariff scenarios.** The current quarterly reference price compared with quarter-hourly pricing and with curtailment of the peaks.
+- **Real weather, year by year,** next to the long-term average.
+- **Shading** from trees and neighbouring buildings, and inverter sizing and losses.
+- **Battery and self-consumption,** from a consumption profile.
+- **Long-term projection** with panel ageing.
 
 ## Assumptions and limits
 
 - Production is PVGIS's 2005-2023 average, computed for 1 kWp per face and scaled to the installed power. System losses default to 14 % (cables, inverter, dust on the panels).
-- There is **no shading** model yet (trees, neighbouring buildings), and roof obstacles are not detected automatically.
-- Heights are relative to a common origin you choose; they drive the tilt, not shading, for now.
+- There is **no shading** model yet, and roof obstacles are not detected automatically.
+- Heights are relative to a common origin you choose; for now they drive the tilt, not shading.
+- The accuracy of the estimate has not been compared with real installations yet.
 - This is an indicative estimate. It does not replace an installer's study.
 
 ## Run it locally
@@ -43,10 +46,6 @@ streamlit run app.py
 
 Downloaded data is cached on disk in `cache/` (ignored by git), so repeated runs are fast and light on the public APIs.
 
-## Deploy
-
-The app is a single Streamlit app (`app.py`) and runs as is on [Streamlit Community Cloud](https://share.streamlit.io): connect this repository, branch `main`, main file `app.py`. No secret is needed.
-
 ## Data sources
 
 | Data | Source |
@@ -54,7 +53,7 @@ The app is a single Streamlit app (`app.py`) and runs as is on [Streamlit Commun
 | Roof faces, tilt, orientation, suitability | [sonnendach.ch](https://www.uvek-gis.admin.ch/BFE/sonnendach/), Swiss Federal Office of Energy, via the geo.admin.ch API |
 | Address search | geo.admin.ch SearchServer |
 | Solar production | [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/), European Commission Joint Research Centre |
-| Historical hourly weather (used later for year-by-year analysis) | [Open-Meteo](https://open-meteo.com/) (CC BY 4.0) |
+| Historical hourly weather (for the planned year-by-year analysis) | [Open-Meteo](https://open-meteo.com/) (CC BY 4.0) |
 | Aerial imagery | SWISSIMAGE © swisstopo |
 | Street map | © OpenStreetMap contributors |
 
