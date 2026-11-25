@@ -14,6 +14,30 @@ Les règles métier marquées « à vérifier » doivent être confirmées avant
 - Analyse de base (PVGIS 2005-2023) et poussée (année par année, Open-Meteo, jusqu'à l'année dernière)
 - Mode sombre, barre de navigation en haut, français, allemand, italien, anglais
 
+Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateur) :
+
+- Page en 5 étapes (onglets) : toit, pans, panneaux, obstacles et position, production ; hypothèses sous la carte
+- Plusieurs bâtiments sélectionnables ; au clic sur un autre toit, fenêtre « ajouter / remplacer / annuler »
+- Un seul tableau de pans (valeurs du cadastre modifiables : largeur, longueur, inclinaison, orientation, hauteur) ;
+  les modes simple/détaillé sont supprimés
+- Obstacles (fenêtre de toit, cheminée, autre) posés au clic, les panneaux les évitent (10 cm de dégagement)
+- Décalage du champ de panneaux d'un pan par pas de 25 cm, avec aimantation (bords, centre, obstacles)
+- Pans dessinés à la main (toits en croix mal détectés), nombre de panneaux voulu ou remplissage automatique
+- Légende de l'aptitude du toit en bas à gauche de la carte
+
+## À reprendre plus tard (retiré de la page pour l'instant)
+
+- **Analyse poussée** (année par année, Open-Meteo) : retirée de la page, le code est dans pv.py
+  (`hourly_by_year`) et dans l'historique git (commit 011b4a3, views/estimate.py).
+- **Glisser-déposer réel** d'un panneau ou d'un groupe sur la carte : demande un composant JS personnalisé
+  (streamlit-folium ne renvoie pas les déplacements) ; aujourd'hui : flèches avec aimantation.
+- **Hauteur du pan** : saisie mais pas encore utilisée, à brancher sur l'ombrage.
+- **Découpage final des sections** : le parcours complet d'abord, puis on organise ce que voit l'utilisateur
+  (ne pas le charger de tout dès le début).
+- Pas de panneaux individuels sélectionnables ni de tailles de panneaux différentes sur un même pan.
+- Vérifier au navigateur : le bug de la cellule en surimpression du tableau (cellules en lecture seule) devrait
+  avoir disparu, car le tableau n'a plus de colonne en lecture seule.
+
 ## Production et installation
 
 1. **Édition des panneaux à la main sur la carte** : sélectionner, supprimer, ajouter, déplacer,

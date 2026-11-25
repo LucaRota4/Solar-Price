@@ -118,10 +118,10 @@ TEXT = {
     # Hypothèses
     "assumptions": ("Hypothèses de calcul", "Berechnungsannahmen", "Ipotesi di calcolo", "Calculation assumptions"),
     "loss": ("Pertes système (%)", "Systemverluste (%)", "Perdite di sistema (%)", "System losses (%)"),
-    "loss_help": ("Câbles, onduleur, salissures. 14 % est la valeur par défaut de PVGIS.",
-                  "Kabel, Wechselrichter, Verschmutzung. 14 % ist der Standardwert von PVGIS.",
-                  "Cavi, inverter, sporcizia. 14 % è il valore predefinito di PVGIS.",
-                  "Cables, inverter, soiling. 14 % is the PVGIS default."),
+    "loss_help": ("Câbles, onduleur, salissures (poussière déposée sur les panneaux). 14 % est la valeur par défaut de PVGIS.",
+                  "Kabel, Wechselrichter, Verschmutzung (Staub auf den Modulen). 14 % ist der Standardwert von PVGIS.",
+                  "Cavi, inverter, sporcizia (polvere sui pannelli). 14 % è il valore predefinito di PVGIS.",
+                  "Cables, inverter, soiling (dust on the panels). 14 % is the PVGIS default."),
     "panel_wp": ("Puissance d'un panneau (Wc)", "Leistung pro Modul (Wp)", "Potenza di un pannello (Wp)", "Panel power (Wp)"),
     "panel_l": ("Longueur panneau (m)", "Modullänge (m)", "Lunghezza pannello (m)", "Panel length (m)"),
     "panel_w": ("Largeur panneau (m)", "Modulbreite (m)", "Larghezza pannello (m)", "Panel width (m)"),
@@ -164,11 +164,140 @@ TEXT = {
     "col_tilt_deg": ("Inclinaison (°)", "Neigung (°)", "Inclinazione (°)", "Tilt (°)"),
     "col_orient_deg": ("Orientation (°)", "Ausrichtung (°)", "Orientamento (°)", "Orientation (°)"),
     "map_note": (
-        "Cliquez sur un toit pour le choisir. Bleu : pans équipés. Gris à brun : aptitude selon le cadastre solaire. Point : l'adresse.",
-        "Klicken Sie auf ein Dach, um es auszuwählen. Blau: belegte Flächen. Grau bis Braun: Eignung laut Solarkataster. Punkt: die Adresse.",
-        "Cliccate su un tetto per sceglierlo. Blu: falde equipaggiate. Da grigio a marrone: idoneità secondo il catasto solare. Punto: l'indirizzo.",
-        "Click a roof to select it. Blue: equipped faces. Grey to brown: suitability from the solar cadastre. Dot: the address.",
+        "Outil « Choisir des toits » : cliquez sur un ou plusieurs bâtiments (un nouveau clic sur un bâtiment choisi le retire). Bleu : pans équipés. Orange : obstacles.",
+        "Werkzeug «Dächer wählen»: Klicken Sie ein oder mehrere Gebäude an (erneuter Klick entfernt es). Blau: belegte Flächen. Orange: Hindernisse.",
+        "Strumento «Scegli tetti»: cliccate uno o più edifici (un nuovo clic su un edificio scelto lo toglie). Blu: falde equipaggiate. Arancione: ostacoli.",
+        "Tool “Pick roofs”: click one or more buildings (clicking a picked building again removes it). Blue: equipped faces. Orange: obstacles.",
     ),
+    "tool": ("Outil de la carte", "Kartenwerkzeug", "Strumento della mappa", "Map tool"),
+    "tool_pick": ("Choisir des toits", "Dächer wählen", "Scegli tetti", "Pick roofs"),
+    "tool_add": ("Ajouter un obstacle", "Hindernis hinzufügen", "Aggiungi ostacolo", "Add obstacle"),
+    "tool_del": ("Supprimer un obstacle", "Hindernis entfernen", "Rimuovi ostacolo", "Remove obstacle"),
+    "tool_help": (
+        "Choisir : un clic ajoute ou retire un bâtiment (plusieurs possibles). Obstacle : un clic sur un pan pose "
+        "l'obstacle (fenêtre de toit, cheminée…), les panneaux l'évitent avec 10 cm de dégagement.",
+        "Wählen: Ein Klick fügt ein Gebäude hinzu oder entfernt es (mehrere möglich). Hindernis: Ein Klick auf eine "
+        "Fläche setzt das Hindernis (Dachfenster, Kamin…), die Module halten 10 cm Abstand.",
+        "Scegli: un clic aggiunge o toglie un edificio (anche più di uno). Ostacolo: un clic su una falda lo posiziona "
+        "(lucernario, camino…), i pannelli lasciano 10 cm di distanza.",
+        "Pick: a click adds or removes a building (several allowed). Obstacle: a click on a face places it "
+        "(roof window, chimney…); panels keep 10 cm clear.",
+    ),
+    "obst_type": ("Type d'obstacle", "Hindernistyp", "Tipo di ostacolo", "Obstacle type"),
+    "obst_velux": ("Fenêtre de toit", "Dachfenster", "Lucernario", "Roof window"),
+    "obst_chimney": ("Cheminée", "Kamin", "Camino", "Chimney"),
+    "obst_custom": ("Autre", "Andere", "Altro", "Other"),
+    "obst_w": ("Largeur (m)", "Breite (m)", "Larghezza (m)", "Width (m)"),
+    "obst_l": ("Longueur dans la pente (m)", "Länge in Neigung (m)", "Lunghezza in pendenza (m)", "Slope length (m)"),
+    "obst_clear": ("Effacer les obstacles ({n})", "Hindernisse löschen ({n})", "Cancella ostacoli ({n})",
+                   "Clear obstacles ({n})"),
+    "click_no_face": ("Cliquez à l'intérieur d'un pan de toit.", "Klicken Sie in eine Dachfläche.",
+                      "Cliccate all'interno di una falda.", "Click inside a roof face."),
+    "click_no_obstacle": ("Pas d'obstacle à cet endroit.", "Kein Hindernis an dieser Stelle.",
+                          "Nessun ostacolo in questo punto.", "No obstacle here."),
+    "legend_panels": ("Pans équipés", "Belegte Flächen", "Falde equipaggiate", "Equipped faces"),
+    "legend_obstacle": ("Obstacle", "Hindernis", "Ostacolo", "Obstacle"),
+    "shift_title": ("Positionner les panneaux", "Module positionieren", "Posizionare i pannelli",
+                    "Position the panels"),
+    "shift_note": (
+        "Décale tout le champ de panneaux d'un pan, par pas de 25 cm, vu depuis l'extérieur du pan. Le champ "
+        "s'aimante aux bords du pan, au centre et aux obstacles (rayon 12 cm) et reste dans les marges.",
+        "Verschiebt das gesamte Modulfeld einer Fläche in 25-cm-Schritten, von aussen auf die Fläche gesehen. "
+        "Das Feld rastet an Flächenrändern, Mitte und Hindernissen ein (12 cm) und bleibt innerhalb der Ränder.",
+        "Sposta tutto il campo di pannelli di una falda a passi di 25 cm, visto dall'esterno. Il campo si "
+        "aggancia ai bordi della falda, al centro e agli ostacoli (12 cm) e resta nei margini.",
+        "Moves a face's whole panel block in 25 cm steps, seen from outside the face. The block snaps to the "
+        "face edges, the centre and obstacles (12 cm) and stays within the margins.",
+    ),
+    "shift_left": ("Gauche", "Links", "Sinistra", "Left"),
+    "shift_right": ("Droite", "Rechts", "Destra", "Right"),
+    "shift_up": ("Vers le faîte", "Zum First", "Verso il colmo", "Towards ridge"),
+    "shift_down": ("Vers la gouttière", "Zur Traufe", "Verso la gronda", "Towards eaves"),
+    "shift_reset": ("Recentrer", "Zentrieren", "Centra", "Recentre"),
+    "step_1": ("1 · Toit", "1 · Dach", "1 · Tetto", "1 · Roof"),
+    "step_2": ("2 · Pans", "2 · Flächen", "2 · Falde", "2 · Faces"),
+    "step_3": ("3 · Panneaux", "3 · Module", "3 · Pannelli", "3 · Panels"),
+    "step_4": ("4 · Obstacles et position", "4 · Hindernisse und Position", "4 · Ostacoli e posizione",
+               "4 · Obstacles and position"),
+    "step_5": ("5 · Production", "5 · Produktion", "5 · Produzione", "5 · Production"),
+    "step1_note": (
+        "Choisissez le ou les bâtiments : entrez une adresse ou cliquez sur les toits de la carte (outil « Choisir "
+        "des toits »). Bâtiments choisis : {n}.",
+        "Wählen Sie ein oder mehrere Gebäude: Adresse eingeben oder Dächer auf der Karte anklicken (Werkzeug "
+        "«Dächer wählen»). Gewählte Gebäude: {n}.",
+        "Scegliete uno o più edifici: inserite un indirizzo o cliccate sui tetti della mappa (strumento «Scegli "
+        "tetti»). Edifici scelti: {n}.",
+        "Pick one or more buildings: enter an address or click roofs on the map (tool “Pick roofs”). "
+        "Buildings picked: {n}.",
+    ),
+    "step2_note": (
+        "Cochez les pans à équiper. Les valeurs viennent du cadastre solaire : si la largeur, la longueur, "
+        "l'inclinaison ou l'orientation d'un pan est fausse, modifiez-la, le nombre de panneaux s'adapte. Un toit "
+        "mal détecté (toit en croix, par exemple) : dessinez les pans vous-même avec l'outil « Dessiner un pan ».",
+        "Wählen Sie die zu belegenden Flächen. Die Werte stammen aus dem Solarkataster: Stimmen Breite, Länge, "
+        "Neigung oder Ausrichtung nicht, ändern Sie sie, die Modulzahl passt sich an. Schlecht erkanntes Dach "
+        "(z. B. Kreuzdach): Zeichnen Sie die Flächen mit dem Werkzeug «Fläche zeichnen» selbst.",
+        "Spuntate le falde da equipaggiare. I valori vengono dal catasto solare: se larghezza, lunghezza, "
+        "inclinazione o orientamento di una falda sono errati, modificateli e il numero di pannelli si adatta. "
+        "Tetto rilevato male (es. a croce): disegnate voi le falde con lo strumento «Disegna falda».",
+        "Tick the faces to equip. Values come from the solar cadastre: if a face's width, length, tilt or "
+        "orientation is wrong, edit it and the panel count adapts. A badly detected roof (a cross roof, say): "
+        "draw the faces yourself with the “Draw a face” tool.",
+    ),
+    "tool_draw": ("Dessiner un pan", "Fläche zeichnen", "Disegna falda", "Draw a face"),
+    "draw_help": (
+        "Dessiner : tracez un polygone ou un rectangle sur la carte, il devient un pan (inclinaison 30° et "
+        "orientation sud par défaut, à régler dans le tableau de l'étape 2).",
+        "Zeichnen: Ziehen Sie ein Polygon oder Rechteck auf der Karte, es wird zur Fläche (Standard 30° Neigung, "
+        "Süd, anpassbar in der Tabelle von Schritt 2).",
+        "Disegna: tracciate un poligono o un rettangolo sulla mappa, diventa una falda (30° e sud per "
+        "impostazione predefinita, da regolare nella tabella del passo 2).",
+        "Draw: trace a polygon or rectangle on the map; it becomes a face (30° tilt, facing south by default, "
+        "adjustable in the step 2 table).",
+    ),
+    "drawn_face": ("Pan dessiné", "Gezeichnete Fläche", "Falda disegnata", "Drawn face"),
+    "drawn_clear": ("Supprimer les pans dessinés ({n})", "Gezeichnete Flächen löschen ({n})",
+                    "Elimina le falde disegnate ({n})", "Delete drawn faces ({n})"),
+    "col_height": ("Hauteur (m)", "Höhe (m)", "Altezza (m)", "Height (m)"),
+    "col_height_help": (
+        "Hauteur du bord bas du pan par rapport à une origine (par exemple le sol). Pas encore utilisée dans le "
+        "calcul : prévue pour l'ombrage.",
+        "Höhe der Unterkante der Fläche relativ zu einem Ursprung (z. B. Boden). Noch nicht in der Berechnung "
+        "verwendet: für die Verschattung vorgesehen.",
+        "Altezza del bordo basso della falda rispetto a un'origine (es. il suolo). Non ancora usata nel calcolo: "
+        "prevista per l'ombreggiamento.",
+        "Height of the face's lower edge relative to an origin (the ground, say). Not used in the calculation "
+        "yet: planned for shading.",
+    ),
+    "fill_auto": ("Remplir automatiquement tous les pans cochés", "Alle gewählten Flächen automatisch belegen",
+                  "Riempi automaticamente tutte le falde spuntate", "Fill all ticked faces automatically"),
+    "n_wanted": ("Nombre de panneaux voulu", "Gewünschte Modulzahl", "Numero di pannelli desiderato",
+                 "Wanted number of panels"),
+    "n_wanted_help": (
+        "Les panneaux sont posés d'abord sur les pans les mieux ensoleillés. Décochez le remplissage "
+        "automatique pour fixer le nombre.",
+        "Die Module werden zuerst auf den sonnigsten Flächen platziert. Automatisches Belegen abwählen, um die "
+        "Zahl festzulegen.",
+        "I pannelli vanno prima sulle falde più soleggiate. Togliete il riempimento automatico per fissare il "
+        "numero.",
+        "Panels go first on the sunniest faces. Untick automatic filling to set the number.",
+    ),
+    "n_capacity": ("Place disponible : {n} panneaux.", "Verfügbarer Platz: {n} Module.",
+                   "Spazio disponibile: {n} pannelli.", "Room for {n} panels."),
+    "switch_title": ("Changer de toit ?", "Dach wechseln?", "Cambiare tetto?", "Switch roof?"),
+    "switch_text": (
+        "Vous avez déjà un toit choisi. Ajouter ce bâtiment à la sélection, ou le remplacer ? Remplacer efface les "
+        "obstacles, les pans dessinés et les positions de panneaux du toit actuel.",
+        "Sie haben bereits ein Dach gewählt. Dieses Gebäude zur Auswahl hinzufügen oder ersetzen? Ersetzen löscht "
+        "Hindernisse, gezeichnete Flächen und Modulpositionen des aktuellen Dachs.",
+        "Avete già scelto un tetto. Aggiungere questo edificio alla selezione o sostituirlo? Sostituire cancella "
+        "ostacoli, falde disegnate e posizioni dei pannelli del tetto attuale.",
+        "You already picked a roof. Add this building to the selection, or replace it? Replacing erases the "
+        "current roof's obstacles, drawn faces and panel positions.",
+    ),
+    "switch_add": ("Ajouter", "Hinzufügen", "Aggiungi", "Add"),
+    "switch_replace": ("Remplacer", "Ersetzen", "Sostituisci", "Replace"),
+    "switch_cancel": ("Annuler", "Abbrechen", "Annulla", "Cancel"),
     "map_satellite": ("Satellite", "Satellit", "Satellite", "Satellite"),
     "map_plan": ("Plan", "Karte", "Mappa", "Map"),
     "pick_face": ("Sélectionnez au moins un pan de toit pour estimer la production.",

@@ -29,12 +29,10 @@ métier). Réponds en français.
 ## Étapes (on avance dans l'ordre, une à la fois)
 1. Production (fait, voir app.py, geo.py, pv.py) : l'utilisateur entre son
    adresse, le toit est détecté via le cadastre solaire suisse (sonnendach.ch,
-   API geo.admin.ch). Deux modes : simple (on coche les pans à couvrir de
-   panneaux) et détaillé (dimensions des pans, inclinaison, orientation,
-   dimensions et puissance des panneaux, tout modifiable, pans ajoutables à la
-   main). Deux analyses : de base (moyenne PVGIS 2005-2023) et poussée (année
-   par année avec la météo horaire réelle d'Open-Meteo, jusqu'à l'année
-   dernière, car PVGIS s'arrête en 2023). Graphiques : production annuelle,
+   API geo.admin.ch). Parcours en 5 étapes (toit,
+   pans, panneaux, obstacles et position, production) : un tableau de pans aux valeurs du cadastre modifiables,
+   pans dessinables à la main, obstacles, plusieurs bâtiments. Analyse de base (moyenne PVGIS 2005-2023) ;
+   l'analyse poussée (Open-Meteo) est en pause (voir ROADMAP). Graphiques : production annuelle,
    mensuelle, journée type été/hiver.
 2. Prix : API Energy-Charts (zone bzn=CH, prix day-ahead en EUR/MWh, à convertir
    en CHF). Calculer le taux de capture, les kWh vendus à prix négatif, le
