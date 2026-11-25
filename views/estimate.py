@@ -109,7 +109,9 @@ class HoverReveal(MacroElement):
   if (!doc.getElementById('hv-css')) {
     var css = doc.createElement('style'); css.id = 'hv-css';
     css.textContent = '.hv{opacity:0;pointer-events:none!important;transition:opacity .12s}'
-      + '.hv.hv-on{opacity:1;pointer-events:auto!important}';
+      + '.hv.hv-on{opacity:1;pointer-events:auto!important}'
+      + '.leaflet-tooltip{opacity:0!important;transition:opacity .15s}'  // les bulles ne s'affichent qu'après 2 s d'immobilité
+      + '.leaflet-tooltip.tt-on{opacity:1!important}';
     doc.head.appendChild(css);
   }
   var old = window.__hv;  // la couche est recréée à chaque mise à jour : on retire les anciens écouteurs
@@ -117,6 +119,7 @@ class HoverReveal(MacroElement):
     map.off('mousemove', old.move); map.off('draw:drawstart', old.ds); map.off('draw:drawstop', old.dp);
     root.removeEventListener('mouseover', old.over, true); root.removeEventListener('mousedown', old.down, true);
     doc.removeEventListener('mouseup', old.up, true); clearTimeout(old.s.timer);
+    root.removeEventListener('mousemove', old.tt, true); clearTimeout(old.tts.timer);
   }
   var groups = {{ this.groups|tojson }};
   var s = {cur: null, timer: null, busy: false, drawing: false};
@@ -162,7 +165,16 @@ class HoverReveal(MacroElement):
   map.on('mousemove', move); map.on('draw:drawstart', ds); map.on('draw:drawstop', dp);
   root.addEventListener('mouseover', over, true); root.addEventListener('mousedown', down, true);
   doc.addEventListener('mouseup', up, true);
-  window.__hv = {move: move, ds: ds, dp: dp, over: over, down: down, up: up, s: s};
+  var tts = {timer: null};  // bulles d'info : cachées dès que la souris bouge, affichées après 2 s sans bouger
+  function tt() {
+    clearTimeout(tts.timer);
+    root.querySelectorAll('.leaflet-tooltip.tt-on').forEach(function (el) { el.classList.remove('tt-on'); });
+    tts.timer = setTimeout(function () {
+      root.querySelectorAll('.leaflet-tooltip').forEach(function (el) { el.classList.add('tt-on'); });
+    }, 2000);
+  }
+  root.addEventListener('mousemove', tt, true);
+  window.__hv = {move: move, ds: ds, dp: dp, over: over, down: down, up: up, s: s, tt: tt, tts: tts};
 })();
 {% endmacro %}
 """)
