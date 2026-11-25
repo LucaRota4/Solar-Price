@@ -175,6 +175,36 @@ def plane_tilt_azimuth(ring, heights) -> tuple[float, float | None]:
     return math.degrees(math.atan(slope)), math.degrees(math.atan2(a, b))  # la pente descend vers (-a, -b)
 
 
+def dist_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Distance approximative en mètres entre deux points (lon, lat)."""
+    k = math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot((lon2 - lon1) * k, lat2 - lat1) * M_PER_DEG_LAT
+
+
+def plane_z(ring, tilt: float, azimuth: float, lon: float, lat: float) -> float:
+    """Hauteur (m) au point (lon, lat) du plan d'un pan du cadastre (inclinaison, orientation) dont le point le
+    plus bas est à 0 : même convention que plane_heights."""
+    a = math.radians(azimuth)
+    down = (-math.sin(a), -math.cos(a))
+    d = [x * down[0] + y * down[1] for x, y in _local(ring)]
+    lon0, lat0 = ring[0]
+    k = math.cos(math.radians(lat0)) * M_PER_DEG_LAT
+    dp = (lon - lon0) * k * down[0] + (lat - lat0) * M_PER_DEG_LAT * down[1]
+    return (max(d) - dp) * math.tan(math.radians(tilt))
+
+
+def fit_plane_z(ring, heights, lon: float, lat: float) -> float:
+    """Hauteur (m) au point (lon, lat) du plan ajusté sur les sommets d'un pan et leurs hauteurs."""
+    import numpy as np
+
+    pts = np.array(_local(ring))
+    design = np.c_[pts, np.ones(len(pts))]
+    (a, b, c), *_ = np.linalg.lstsq(design, np.array(heights, dtype=float), rcond=None)
+    lon0, lat0 = ring[0]
+    k = math.cos(math.radians(lat0)) * M_PER_DEG_LAT
+    return float(a * (lon - lon0) * k + b * (lat - lat0) * M_PER_DEG_LAT + c)
+
+
 def face_dimensions(face: dict) -> tuple[float, float]:
     """Dimensions approximatives du pan (largeur le long du faîte, longueur dans la pente), en m.
 

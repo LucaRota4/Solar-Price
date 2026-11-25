@@ -34,6 +34,11 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
   l'orientation et les hauteurs du pan le plus recouvert (supprimer le pan dessiné les restaure) ; coins numérotés
   sur la carte, hauteur de chaque coin modifiable dans « Pans dessinés » au-dessus de la carte, l'inclinaison et
   l'orientation en sont déduites (plan passant par les coins)
+- Coins des pans dessinés : poignées à glisser sur la carte (le pan et les calculs suivent), obstacles aussi
+  (poignée au centre, l'obstacle passe sur le pan sous la nouvelle position)
+- Coins partagés : un coin posé ou lâché à moins de 60 cm d'un coin d'un autre pan fusionne avec lui (un seul point,
+  une seule hauteur) ; hauteurs de départ recalées sur les toits voisins (pans dessinés, puis pan du cadastre sous
+  le tracé), avec la pente du pan remplacé conservée
 - Pans du cadastre : hauteur du bas et du haut dans le tableau, modifier le haut recalcule l'inclinaison
 - Légende de l'aptitude du toit en bas à gauche de la carte
 

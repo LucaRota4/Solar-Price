@@ -1,5 +1,6 @@
 """Estimation solaire : adresse -> toit -> pans équipés -> production annuelle."""
 import math
+import re
 
 import folium
 import pandas as pd
@@ -53,6 +54,28 @@ compass.onAdd = function () {
   return d;
 };
 compass.addTo({{ this._parent.get_name() }});
+{% endmacro %}
+""")
+
+
+class DragEnd(MacroElement):
+    """Quand on lâche un marqueur déplaçable, déclenche un « clic » à sa nouvelle position. streamlit-folium
+    renvoie à Python la position et l'infobulle du dernier objet cliqué : on y ajoute un texte caché « @drag »
+    pour distinguer un glissement d'un vrai clic, puis on remet l'infobulle d'origine."""
+
+    _template = Template("""
+{% macro script(this, kwargs) %}
+{{ this._parent.get_name() }}.eachLayer(function (l) {
+  if (!(l instanceof L.Marker) || !l.options.draggable) return;
+  l.on('dragend', function (e) {
+    var m = e.target, tt = m.getTooltip();
+    if (!tt) return;
+    var orig = tt.getContent();
+    m.setTooltipContent(orig + '<span style="display:none">@drag</span>');
+    m.fire('click', {latlng: m.getLatLng(), sourceTarget: m, target: m});
+    m.setTooltipContent(orig);
+  });
+});
 {% endmacro %}
 """)
 
@@ -171,6 +194,9 @@ st.session_state.setdefault("show_panels", False)  # les panneaux ne sont posés
 st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
 st.session_state.setdefault("epoch", 0)  # change quand il faut recréer la carte (efface le tracé en cours)
 st.session_state.setdefault("custom_n", 0)
+st.session_state.setdefault("points", {})  # points partagés des pans dessinés : id -> [lon, lat, hauteur]
+st.session_state.setdefault("point_n", 0)
+st.session_state.setdefault("z_ver", 0)  # change quand le programme (et non l'utilisateur) modifie des hauteurs
 st.session_state.setdefault("shifts", {})  # face_id -> décalage (s, d) en m du champ de panneaux
 
 
@@ -249,6 +275,99 @@ def handle_click(out, tool) -> bool:
     return False
 
 
+SNAP_M = 0.6  # rayon d'aimantation des coins entre pans dessinés, en m
+
+
+def new_point(lon, lat, z) -> int:
+    st.session_state.point_n += 1
+    st.session_state.points[st.session_state.point_n] = [lon, lat, round(float(z), 2)]
+    return st.session_state.point_n
+
+
+def sync_custom():
+    """Contour, hauteurs, inclinaison et orientation des pans dessinés, relus depuis leurs points : un point
+    partagé entre deux pans n'a qu'une position et qu'une hauteur."""
+    pts = st.session_state.points
+    for f in custom:
+        if "pids" not in f:  # pan d'une ancienne session : on crée ses points
+            f["pids"] = [new_point(x, y, z) for (x, y), z in zip(f["ring"], f["z"])]
+        f["ring"] = [[pts[p][0], pts[p][1]] for p in f["pids"]]
+        f["z"] = [pts[p][2] for p in f["pids"]]
+        f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
+        if az is not None:
+            f["azimuth"] = az
+        f["area"] = geo.ring_area(f["ring"]) / max(math.cos(math.radians(f["tilt"])), 0.2)
+
+
+def nearest_point(lon, lat, exclude=()):
+    """Point existant à moins de SNAP_M (le plus proche), hors `exclude`."""
+    best = None
+    for pid, (x, y, _) in st.session_state.points.items():
+        d = geo.dist_m(lon, lat, x, y)
+        if pid not in exclude and d <= SNAP_M and (best is None or d < best[0]):
+            best = (d, pid)
+    return best[1] if best else None
+
+
+def neighbor_z(lon, lat, exclude=(), main=None, drawn_only=False):
+    """Hauteur du toit voisin au point (lon, lat) : les pans dessinés d'abord (hauteurs réglées à la main), puis le
+    pan du cadastre sous le tracé, puis les autres. None s'il n'y a pas de toit à cet endroit."""
+    for f in custom:
+        if f["id"] not in exclude and geo.contains(f["ring"], lon, lat):
+            return geo.fit_plane_z(f["ring"], f["z"], lon, lat)
+    if drawn_only:
+        return None
+    for f in ([main] if main else []) + [f for f in store.values() if not f.get("custom") and f is not main]:
+        if geo.contains(f["ring"], lon, lat):
+            return geo.plane_z(f["ring"], f["tilt"], f["azimuth"], lon, lat)
+    return None
+
+
+def handle_drag(out) -> bool:
+    """Coin d'un pan dessiné ou obstacle déplacé à la main (poignée lâchée ailleurs). True si on a bougé quelque
+    chose. Un coin lâché près d'un coin d'un autre pan fusionne avec lui (aimantation) : un seul point, une seule
+    hauteur."""
+    tip = (out or {}).get("last_object_clicked_tooltip") or ""
+    pos = (out or {}).get("last_object_clicked")
+    m = re.search(r"@([co]):(\d+):(\d+)\s*@drag", tip)
+    if not m or not pos:
+        return False
+    key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), round(pos["lat"], 7),
+           round(pos["lng"], 7))
+    if st.session_state.get("last_drag") == key:  # déjà traité lors d'une exécution précédente
+        return False
+    st.session_state.last_drag = key
+    kind, a = m.group(1), int(m.group(2))
+    lon, lat = pos["lng"], pos["lat"]
+    if kind == "c":  # point a
+        pts = st.session_state.points
+        if a not in pts:
+            return False
+        mine = [f for f in custom if a in f["pids"]]
+        target = nearest_point(lon, lat, exclude={p for f in mine for p in f["pids"]})  # jamais un coin du même pan
+        if target is not None:
+            for f in custom:
+                f["pids"] = [target if p == a else p for p in f["pids"]]
+            del pts[a]
+        else:
+            pts[a][0], pts[a][1] = lon, lat
+            zn = neighbor_z(lon, lat, exclude={f["id"] for f in mine}, drawn_only=True)
+            if zn is not None:  # le coin est maintenant sur un autre pan dessiné : il prend sa hauteur
+                pts[a][2] = round(zn, 2)
+        st.session_state.z_ver += 1
+        sync_custom()
+        return True
+    obstacles = st.session_state.obstacles  # obstacle d'indice a : il passe sur le pan sous la nouvelle position
+    if a >= len(obstacles):
+        return False
+    hit = next((f for f in store.values() if geo.contains(f["ring"], lon, lat)), None)
+    if hit is None:
+        st.toast(t("obstacle_moved_off"), icon=":material/roofing:")
+        return True  # la carte est redessinée avec l'ancienne position
+    obstacles[a].update(lon=lon, lat=lat, face_id=hit["id"])
+    return True
+
+
 def handle_drawings(out) -> bool:
     """Polygones tracés avec l'outil de dessin -> nouveaux pans (une seule fois par tracé). La carte est
     recréée ensuite (epoch) pour effacer le tracé de l'outil : le pan est redessiné par l'application."""
@@ -281,15 +400,31 @@ def handle_drawings(out) -> bool:
         replaced = [f["id"] for _, f in under if f["id"] in sel]
         for i in replaced:
             sel.remove(i)
-        custom.append({"id": CUSTOM_ID0 + n, "building_id": -1, "ring": ring, "tilt": tilt0, "azimuth": az0,
-                       "z": geo.plane_heights(ring, tilt0, az0), "klasse": 0, "area": 0.0, "custom": True,
+        # Coins : un point existant à moins de SNAP_M est réutilisé (aimantation), sinon un nouveau point
+        pids = []
+        for x, y in ring:
+            pids.append(nearest_point(x, y, exclude=[p for p in pids if p is not None]))
+        # Hauteurs : le plan déduit du pan remplacé, recalé pour passer par les points partagés et par les toits
+        # voisins (un bas de toit qui s'arrête plus haut qu'un toit voisin descendant à 0 m n'est pas à 0 m)
+        z_def = geo.plane_heights(ring, tilt0, az0)
+        pts, diffs = st.session_state.points, []
+        for i, (x, y) in enumerate(ring):
+            zn = pts[pids[i]][2] if pids[i] is not None else neighbor_z(x, y, main=main)
+            if zn is not None:
+                diffs.append(zn - z_def[i])
+        shift = sum(diffs) / len(diffs) if diffs else 0.0
+        pids = [p if p is not None else new_point(x, y, z_def[i] + shift) for i, (p, (x, y)) in enumerate(zip(pids, ring))]
+        custom.append({"id": CUSTOM_ID0 + n, "building_id": -1, "ring": ring, "z": [0.0] * len(ring), "pids": pids,
+                       "tilt": tilt0, "azimuth": az0, "klasse": 0, "area": 0.0, "custom": True,
                        "irradiation": main["irradiation"] if main else 0.0, "replaced": replaced,
                        "name": f"{t('drawn_face')} {n}"})
+        sync_custom()
         if replaced:
             st.toast(t("drawn_replaced", n=len(replaced), tilt=f"{tilt0:.0f}"), icon=":material/draw:")
         new = True
     if new:
         st.session_state.epoch += 1
+        st.session_state.z_ver += 1
     return new
 
 
@@ -300,7 +435,10 @@ def delete_drawn(fid=None):
         if fid is None or f["id"] == fid:
             sel += [i for i in f.get("replaced", []) if i not in sel and i in store]
     custom[:] = [f for f in custom if fid is not None and f["id"] != fid]
+    used = {p for f in custom for p in f["pids"]}  # les points qui ne servent plus disparaissent
+    st.session_state.points = {k: v for k, v in st.session_state.points.items() if k in used}
     st.session_state.epoch += 1
+    st.session_state.z_ver += 1
 
 
 def reset_roof():
@@ -309,6 +447,7 @@ def reset_roof():
     st.session_state.obstacles.clear()
     st.session_state.shifts.clear()
     st.session_state.custom_faces.clear()
+    st.session_state.points = {}
     st.session_state.epoch += 1
     st.session_state.show_panels = False
     st.session_state.cells_loaded = set()
@@ -346,27 +485,28 @@ with draw_slot:
             st.caption(t("drawn_none"))
     if custom:
         st.markdown(f"**{t('drawn_title')}**")
+        pts = st.session_state.points
+        used = sorted(pts)
+        owners = {p: [f["name"] for f in custom if p in f["pids"]] for p in used}
+        st.caption(t("corner_heights"))
+        # Un seul tableau pour tous les points : un point partagé entre deux pans n'y figure qu'une fois
+        ed = st.data_editor(
+            pd.DataFrame({t("col_height"): [pts[p][2] for p in used]},
+                         index=[f"{t('corner')} {p} · {', '.join(owners[p])}" for p in used]),
+            key=f"pts-{lang()}-{st.session_state.z_ver}-{'-'.join(map(str, used))}", width="stretch",
+            column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
+        for p, v in zip(used, ed[t("col_height")]):
+            if pd.notna(v) and abs(float(v) - pts[p][2]) > 1e-9:
+                pts[p][2] = float(v)
+        sync_custom()
         for f in custom:
-            f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
-            if az is not None:
-                f["azimuth"] = az
-            f["area"] = geo.ring_area(f["ring"]) / max(math.cos(math.radians(f["tilt"])), 0.2)
-            with st.expander(f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])}"):
-                st.caption(t("corner_heights"))
-                ed = st.data_editor(
-                    pd.DataFrame({t("col_height"): f["z"]}, index=[f"{t('corner')} {i}" for i in range(1, len(f["z"]) + 1)]),
-                    key=f"z-{f['id']}-{lang()}", width="stretch",
-                    column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
-                f["z"] = [float(v) for v in ed[t("col_height")]]
-                st.button(t("drawn_delete"), icon=":material/delete:", key=f"del-{f['id']}", on_click=delete_drawn,
-                          args=(f["id"],))
-        if custom:
-            st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", on_click=delete_drawn)
-for f in custom:  # inclinaison et orientation déduites des hauteurs des coins
-    f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
-    if az is not None:
-        f["azimuth"] = az
-    f["area"] = geo.ring_area(f["ring"]) / max(math.cos(math.radians(f["tilt"])), 0.2)
+            c1, c2 = st.columns([6, 1], vertical_alignment="center")
+            c1.markdown(f"**{f['name']}** · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])} · "
+                        f"{t('corner')} {', '.join(map(str, f['pids']))}")
+            c2.button(" ", icon=":material/delete:", key=f"del-{f['id']}", help=t("drawn_delete"),
+                      on_click=delete_drawn, args=(f["id"],), width="stretch")
+        st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", on_click=delete_drawn)
+sync_custom()  # inclinaison et orientation déduites des hauteurs des coins
 
 try:
     near = roofs(loc["lat"], loc["lon"])  # tous les toits dans le périmètre autour du lieu sélectionné
@@ -643,29 +783,39 @@ with map_slot:
             weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
             fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
-    for f in custom:  # coins numérotés des pans dessinés, avec leur hauteur
-        for i, ((x, y), z) in enumerate(zip(f["ring"], f["z"]), 1):
-            folium.Marker(
-                [y, x], tooltip=f"{t('corner')} {i} · {z:.2f} m",
-                icon=folium.DivIcon(icon_size=(20, 20), icon_anchor=(10, 10), html=(
-                    f'<div style="width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
-                    f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff">{i}</div>')),
-            ).add_to(dyn)
+    for pid, (x, y, z) in st.session_state.points.items():  # points des pans dessinés, numérotés, à glisser
+        folium.Marker(
+            [y, x], draggable=True,
+            tooltip=(f"{t('corner')} {pid} · {z:.2f} m ({t('drag_hint')})"
+                     f'<span style="display:none">@c:{pid}:0</span>'),
+            icon=folium.DivIcon(icon_size=(20, 20), icon_anchor=(10, 10), html=(
+                f'<div style="width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff;cursor:grab">{pid}</div>')),
+        ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
                            fill_color="#16233a", fill_opacity=0.92, interactive=False).add_to(dyn)
-    for ob in st.session_state.obstacles:
+    for k, ob in enumerate(st.session_state.obstacles):
         folium.Polygon([(y, x) for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)], color="#ffffff",
-                       weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9,
-                       tooltip=f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", interactive=False).add_to(dyn)
+                       weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9, interactive=False).add_to(dyn)
+        folium.Marker(  # poignée au centre, à glisser pour déplacer l'obstacle
+            [ob["lat"], ob["lon"]], draggable=True,
+            tooltip=(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m ({t('drag_hint')})"
+                     f'<span style="display:none">@o:{k}:0</span>'),
+            icon=folium.DivIcon(icon_size=(18, 18), icon_anchor=(9, 9), html=(
+                f'<div style="width:18px;height:18px;border-radius:50%;background:{OBSTACLE};border:2px solid #fff;'
+                'box-shadow:0 0 3px rgba(0,0,0,.7);cursor:grab"></div>')),
+        ).add_to(dyn)
+    dyn.add_child(DragEnd())  # en dernier : les marqueurs doivent déjà exister
     out = st_folium(fmap, feature_group_to_add=dyn, height=MAP_HEIGHT, use_container_width=True,
-                    returned_objects=["last_clicked", "all_drawings", "center", "zoom", "bounds"],
+                    returned_objects=["last_clicked", "all_drawings", "center", "zoom", "bounds", "last_object_clicked",
+                                      "last_object_clicked_tooltip", "last_object_clicked_count"],
                     key=f"roofmap-{st.session_state.epoch}-{lang()}-{tool == 'draw'}")
     if out and out.get("center") and out.get("zoom"):  # vue actuelle, pour recréer la carte au même endroit
         st.session_state.live_view = {"center": [out["center"]["lat"], out["center"]["lng"]], "zoom": out["zoom"]}
     st.caption(t("map_note"))
-    changed = handle_drawings(out) or handle_click(out, tool)
+    changed = handle_drawings(out) or handle_drag(out) or handle_click(out, tool)
     if out and valid_bounds(out.get("bounds")):  # les toits se chargent autour de la vue, sans cliquer
         st.session_state.live_bounds = out["bounds"]
         if (out.get("zoom") or 0) >= 17:
