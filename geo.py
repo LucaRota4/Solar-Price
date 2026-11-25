@@ -108,6 +108,18 @@ def contains(ring, lon, lat) -> bool:
     return inside
 
 
+def coverage(a, b, n: int = 14) -> float:
+    """Part (0..1) de la surface du contour a recouverte par le contour b, par échantillonnage en grille."""
+    ax, ay = [p[0] for p in a], [p[1] for p in a]
+    bx, by = [p[0] for p in b], [p[1] for p in b]
+    if max(ax) < min(bx) or min(ax) > max(bx) or max(ay) < min(by) or min(ay) > max(by):
+        return 0.0
+    pts = [(min(ax) + (max(ax) - min(ax)) * (i + 0.5) / n, min(ay) + (max(ay) - min(ay)) * (j + 0.5) / n)
+           for i in range(n) for j in range(n)]
+    inside = [p for p in pts if contains(a, *p)]
+    return sum(contains(b, *p) for p in inside) / len(inside) if inside else 0.0
+
+
 def _centroid(ring):
     return sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring)
 

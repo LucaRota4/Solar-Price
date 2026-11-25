@@ -30,9 +30,11 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
 - Pans dessinés à la main (toits en croix mal détectés), nombre de panneaux voulu ou remplissage automatique
 - Carte stable : les couches qui bougent n'obligent plus à recharger la carte, la vue ne saute plus ; zoom
   jusqu'à 23 (au-delà de 20, l'image est agrandie)
-- Pans dessinés : panneau d'aide à l'outil « Dessiner un pan » (étapes, hauteur de chaque coin, suppression
-  d'un pan ou de tous) ; l'inclinaison et l'orientation viennent du plan passant par les coins
-- Hauteur du bas et du haut de chaque pan dans le tableau : modifier le haut recalcule l'inclinaison
+- Pans dessinés : un pan tracé par-dessus des pans du cadastre déjà choisis les remplace et reprend l'inclinaison,
+  l'orientation et les hauteurs du pan le plus recouvert (supprimer le pan dessiné les restaure) ; coins numérotés
+  sur la carte, hauteur de chaque coin modifiable dans « Pans dessinés » au-dessus de la carte, l'inclinaison et
+  l'orientation en sont déduites (plan passant par les coins)
+- Pans du cadastre : hauteur du bas et du haut dans le tableau, modifier le haut recalcule l'inclinaison
 - Légende de l'aptitude du toit en bas à gauche de la carte
 
 ## À reprendre plus tard (retiré de la page pour l'instant)

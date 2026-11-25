@@ -266,10 +266,27 @@ def handle_drawings(out) -> bool:
         seen_drawings.add(sig)
         st.session_state.custom_n += 1
         n = st.session_state.custom_n
-        # Départ : pente de 30° plein sud, hauteurs des coins modifiables ensuite
-        custom.append({"id": CUSTOM_ID0 + n, "building_id": -1, "ring": ring, "tilt": 30.0, "azimuth": 0.0,
-                       "z": geo.plane_heights(ring, 30, 0), "klasse": 0, "irradiation": 0.0, "area": 0.0,
-                       "custom": True, "name": f"{t('drawn_face')} {n}"})
+        # Pans du cadastre sous le tracé : le plus recouvert donne l'inclinaison et l'orientation de départ ;
+        # ceux déjà choisis sont remplacés par le pan dessiné (restaurés si on supprime celui-ci)
+        under = []
+        for f in store.values():
+            if f.get("custom"):
+                continue
+            c_drawn, c_face = geo.coverage(ring, f["ring"]), geo.coverage(f["ring"], ring)
+            if c_drawn >= 0.2 or c_face >= 0.5:
+                under.append((c_drawn, f))
+        main = max(under, key=lambda u: u[0])[1] if under else None
+        tilt0, az0 = (main["tilt"], main["azimuth"]) if main else (30.0, 0.0)
+        sel = st.session_state.sel_faces
+        replaced = [f["id"] for _, f in under if f["id"] in sel]
+        for i in replaced:
+            sel.remove(i)
+        custom.append({"id": CUSTOM_ID0 + n, "building_id": -1, "ring": ring, "tilt": tilt0, "azimuth": az0,
+                       "z": geo.plane_heights(ring, tilt0, az0), "klasse": 0, "area": 0.0, "custom": True,
+                       "irradiation": main["irradiation"] if main else 0.0, "replaced": replaced,
+                       "name": f"{t('drawn_face')} {n}"})
+        if replaced:
+            st.toast(t("drawn_replaced", n=len(replaced), tilt=f"{tilt0:.0f}"), icon=":material/draw:")
         new = True
     if new:
         st.session_state.epoch += 1
@@ -278,6 +295,10 @@ def handle_drawings(out) -> bool:
 
 def delete_drawn(fid=None):
     """Supprime un pan dessiné (ou tous) et recrée la carte pour effacer son tracé."""
+    sel = st.session_state.sel_faces
+    for f in custom:  # les pans du cadastre qu'il remplaçait redeviennent choisis
+        if fid is None or f["id"] == fid:
+            sel += [i for i in f.get("replaced", []) if i not in sel and i in store]
     custom[:] = [f for f in custom if fid is not None and f["id"] != fid]
     st.session_state.epoch += 1
 
@@ -323,6 +344,8 @@ with draw_slot:
         st.info(t("draw_steps"), icon=":material/draw:")
         if not custom:
             st.caption(t("drawn_none"))
+    if custom:
+        st.markdown(f"**{t('drawn_title')}**")
         for f in custom:
             f["tilt"], az = geo.plane_tilt_azimuth(f["ring"], f["z"])
             if az is not None:
@@ -331,10 +354,10 @@ with draw_slot:
             with st.expander(f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])}"):
                 st.caption(t("corner_heights"))
                 ed = st.data_editor(
-                    pd.DataFrame({t("col_hb"): f["z"]}, index=[f"{t('corner')} {i}" for i in range(1, len(f["z"]) + 1)]),
+                    pd.DataFrame({t("col_height"): f["z"]}, index=[f"{t('corner')} {i}" for i in range(1, len(f["z"]) + 1)]),
                     key=f"z-{f['id']}-{lang()}", width="stretch",
-                    column_config={t("col_hb"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
-                f["z"] = [float(v) for v in ed[t("col_hb")]]
+                    column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
+                f["z"] = [float(v) for v in ed[t("col_height")]]
                 st.button(t("drawn_delete"), icon=":material/delete:", key=f"del-{f['id']}", on_click=delete_drawn,
                           args=(f["id"],))
         if custom:
@@ -486,8 +509,10 @@ with tab2:
     for f in bfaces:
         dims0[f["id"]] = geo.face_dimensions(f)
         run = dims0[f["id"]][1] * math.cos(math.radians(round(f["tilt"])))  # profondeur horizontale du pan
-        bottom = round(min(f["z"]), 2) if f.get("z") else 0.0
-        heights0[f["id"]] = (bottom, round(bottom + run * math.tan(math.radians(round(f["tilt"]))), 2))
+        if f.get("custom"):  # pan dessiné : les hauteurs se règlent coin par coin, au-dessus de la carte
+            heights0[f["id"]] = (None, None)
+        else:
+            heights0[f["id"]] = (0.0, round(run * math.tan(math.radians(round(f["tilt"]))), 2))
         rows.append({inc: f["on"], wid: dims0[f["id"]][0], lng: dims0[f["id"]][1], tilt: round(f["tilt"]),
                      ori: round(f["azimuth"]), hb: heights0[f["id"]][0], ht: heights0[f["id"]][1],
                      "face_id": f["id"]})
@@ -524,7 +549,8 @@ with tab2:
             continue
         tilt_eff = r[tilt]
         hb0, ht0 = heights0[f["id"]]
-        if pd.notna(r[hb]) and pd.notna(r[ht]) and (abs(r[hb] - hb0) > 0.005 or abs(r[ht] - ht0) > 0.005):
+        if hb0 is not None and pd.notna(r[hb]) and pd.notna(r[ht]) and (abs(r[hb] - hb0) > 0.005
+                                                                         or abs(r[ht] - ht0) > 0.005):
             run = max(r[lng] * math.cos(math.radians(r[tilt])), 0.1)  # profondeur horizontale du pan
             tilt_eff = min(math.degrees(math.atan2(max(r[ht] - r[hb], 0), run)), 90)
             by_heights.append(f"{f['label']} {tilt_eff:.0f}°")
@@ -617,6 +643,14 @@ with map_slot:
             weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
             fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
+    for f in custom:  # coins numérotés des pans dessinés, avec leur hauteur
+        for i, ((x, y), z) in enumerate(zip(f["ring"], f["z"]), 1):
+            folium.Marker(
+                [y, x], tooltip=f"{t('corner')} {i} · {z:.2f} m",
+                icon=folium.DivIcon(icon_size=(20, 20), icon_anchor=(10, 10), html=(
+                    f'<div style="width:20px;height:20px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                    f'font:700 11px/20px Inter,sans-serif;text-align:center;border:1.5px solid #fff">{i}</div>')),
+            ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
