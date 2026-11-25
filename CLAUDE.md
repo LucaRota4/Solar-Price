@@ -16,6 +16,10 @@ métier). Réponds en français.
 - requests, pandas, plotly
 - Tout tourne en local (http://localhost:8501)
 
+## Idées en attente
+Toutes les idées discutées mais pas encore faites sont dans ROADMAP.md. Le lire avant chaque
+nouvelle étape, et y ajouter toute nouvelle idée que Luca mentionne « pour plus tard ».
+
 ## Étapes (on avance dans l'ordre, une à la fois)
 1. Production (fait, voir app.py, geo.py, pv.py) : l'utilisateur entre son
    adresse, le toit est détecté via le cadastre solaire suisse (sonnendach.ch,
