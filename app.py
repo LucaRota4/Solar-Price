@@ -6,7 +6,7 @@ import streamlit as st
 
 from i18n import LANG_NAMES, LANGS, t
 
-st.set_page_config(page_title="Solar Price", page_icon=":material/solar_power:", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Solar Reality Check", page_icon=":material/solar_power:", layout="wide", initial_sidebar_state="expanded")
 
 if "lang" not in st.session_state:
     st.session_state.lang = "fr"

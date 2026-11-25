@@ -10,7 +10,7 @@ LANG_NAMES = {"fr": "Français", "de": "Deutsch", "it": "Italiano", "en": "Engli
 
 TEXT = {
     # Navigation et pied de page
-    "brand": ("Solar Price", "Solar Price", "Solar Price", "Solar Price"),
+    "brand": ("Solar Reality Check", "Solar Reality Check", "Solar Reality Check", "Solar Reality Check"),
     "nav_estimate": ("Estimation solaire", "Solarschätzung", "Stima solare", "Solar estimate"),
     "nav_analysis": ("Analyse complète", "Gesamtanalyse", "Analisi completa", "Full analysis"),
     "nav_data": ("Données & méthode", "Daten & Methode", "Dati e metodo", "Data & method"),

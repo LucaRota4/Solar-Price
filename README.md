@@ -1,4 +1,4 @@
-# Solar Price
+# Solar Reality Check
 
 > **Work in progress.** Only the first step is built and usable today: a production estimate for a real Swiss roof. The rest of what this project is meant to do is described below as *planned*. Numbers are indicative and have not been validated against measured production yet.
 
