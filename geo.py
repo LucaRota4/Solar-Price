@@ -205,6 +205,70 @@ def fit_plane_z(ring, heights, lon: float, lat: float) -> float:
     return float(a * (lon - lon0) * k + b * (lat - lat0) * M_PER_DEG_LAT + c)
 
 
+def panel_dims(face: dict, pw: float, pl: float, land: bool) -> tuple[float, float]:
+    """Taille d'un panneau dans le repère du pan, en m : (le long du faîte, dans la pente en projection au sol).
+    Portrait : le grand côté suit la pente ; paysage : il suit le faîte."""
+    c = math.cos(math.radians(face["tilt"]))
+    return (pl, pw * c) if land else (pw, pl * c)
+
+
+def panel_rect(face: dict, lon: float, lat: float, pw: float, pl: float, land: bool) -> list[list[float]]:
+    """Contour [[lon, lat], ...] d'un panneau centré en (lon, lat), aligné sur le pan."""
+    to_sd, to_lonlat = _frame(face)
+    s, d = to_sd(lon, lat)
+    ws, wd = panel_dims(face, pw, pl, land)
+    return [to_lonlat(s + a, d + b) for a, b in ((-ws / 2, -wd / 2), (ws / 2, -wd / 2), (ws / 2, wd / 2),
+                                                 (-ws / 2, wd / 2))]
+
+
+def layout_to_panels(face: dict, layout, pw: float, pl: float) -> list[tuple[float, float, bool]]:
+    """Panneaux (lon, lat du centre, paysage ?) d'une disposition automatique : point de départ de la disposition
+    à la main."""
+    to_sd, to_lonlat = _frame(face)
+    out = []
+    for rect in layout:
+        sd = [to_sd(x, y) for x, y in rect]
+        s, d = sum(p[0] for p in sd) / 4, sum(p[1] for p in sd) / 4
+        ws = max(p[0] for p in sd) - min(p[0] for p in sd)
+        lon, lat = to_lonlat(s, d)
+        out.append((lon, lat, abs(ws - pl) < abs(ws - pw)))
+    return out
+
+
+def snap_panel(face: dict, lon: float, lat: float, pw: float, pl: float, land: bool, others, margin: float,
+               obstacles=(), gap: float = 0.02, tol: float = 0.3):
+    """Position (lon, lat) d'un panneau déposé près de (lon, lat), ou None si elle est impossible.
+
+    Aimantation (rayon `tol`, indépendante sur chaque axe du pan) : bords des autres panneaux `others` (liste de
+    (lon, lat, paysage)) — collé à côté avec `gap`, ou aligné sur un de leurs bords ou leur centre — et marges du
+    pan. Refusé si le panneau sort du contour, touche un autre panneau ou un obstacle.
+    """
+    to_sd, to_lonlat = _frame(face)
+    poly = [to_sd(x, y) for x, y in face["ring"]]
+    s, d = to_sd(lon, lat)
+    ws, wd = panel_dims(face, pw, pl, land)
+    cos_t = math.cos(math.radians(face["tilt"]))
+    near = [(to_sd(x, y), panel_dims(face, pw, pl, ll)) for x, y, ll in others]
+    s_c = [min(p[0] for p in poly) + margin + ws / 2, max(p[0] for p in poly) - margin - ws / 2]
+    d_c = [min(p[1] for p in poly) + margin * cos_t + wd / 2, max(p[1] for p in poly) - margin * cos_t - wd / 2]
+    for (qs, qd), (qws, qwd) in near:
+        s_c += [qs + (qws + ws) / 2 + gap, qs - (qws + ws) / 2 - gap, qs, qs + (qws - ws) / 2, qs - (qws - ws) / 2]
+        d_c += [qd + (qwd + wd) / 2 + gap, qd - (qwd + wd) / 2 - gap, qd, qd + (qwd - wd) / 2, qd - (qwd - wd) / 2]
+    best = lambda v, cands: min((c for c in cands if abs(c - v) <= tol), key=lambda c: abs(c - v), default=v)  # noqa: E731
+    s, d = best(s, s_c), best(d, d_c)
+    if not all(contains(poly, s + a, d + b) for a, b in ((-ws / 2, -wd / 2), (ws / 2, -wd / 2), (ws / 2, wd / 2),
+                                                          (-ws / 2, wd / 2))):
+        return None
+    for (qs, qd), (qws, qwd) in near:
+        if abs(s - qs) < (ws + qws) / 2 - 0.01 and abs(d - qd) < (wd + qwd) / 2 - 0.01:
+            return None
+    for ob in obstacles:
+        os_, od = to_sd(ob["lon"], ob["lat"])
+        if abs(s - os_) < (ws + ob["w"]) / 2 and abs(d - od) < (wd + ob["l"] * cos_t) / 2:
+            return None
+    return tuple(to_lonlat(s, d))
+
+
 def face_dimensions(face: dict) -> tuple[float, float]:
     """Dimensions approximatives du pan (largeur le long du faîte, longueur dans la pente), en m.
 

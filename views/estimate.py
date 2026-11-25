@@ -208,6 +208,11 @@ st.session_state.setdefault("show_panels", False)  # les panneaux ne sont posés
 st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
 st.session_state.setdefault("epoch", 0)  # change quand il faut recréer la carte (efface le tracé en cours)
 st.session_state.setdefault("custom_n", 0)
+st.session_state.setdefault("obst_n", 0)
+st.session_state.setdefault("manual", {})  # pan -> panneaux posés à la main [{id, lon, lat, land}]
+st.session_state.setdefault("manual_n", 0)
+st.session_state.setdefault("manual_pending", set())  # pans à passer à la main au prochain calcul
+st.session_state.setdefault("new_orient", "same")
 st.session_state.setdefault("points", {})  # points partagés des pans dessinés : id -> [lon, lat, hauteur]
 st.session_state.setdefault("point_n", 0)
 st.session_state.setdefault("z_ver", 0)  # change quand le programme (et non l'utilisateur) modifie des hauteurs
@@ -270,13 +275,31 @@ def handle_click(out, tool) -> bool:
         else:
             sel.append(hit["id"])
         return True
+    if tool == "panels":  # ajoute un panneau à l'endroit cliqué (le pan passe à la main au besoin)
+        if hit is None or hit["id"] not in fe_by_id:
+            st.toast(t("click_no_panel_face"), icon=":material/solar_power:")
+            return False
+        fid = hit["id"]
+        if fid not in st.session_state.manual:
+            make_manual(fid)
+        have = st.session_state.manual[fid]
+        mode = st.session_state.new_orient  # « comme les voisins » : l'orientation la plus fréquente sur ce pan
+        land = (sum(p["land"] for p in have) * 2 > len(have)) if mode == "same" and have else mode == "landscape"
+        pos = panel_position(fid, c_lon, c_lat, land)
+        if pos is None:
+            st.toast(t("panel_invalid"), icon=":material/block:")
+            return True  # le pan est passé à la main : on redessine
+        st.session_state.manual_n += 1
+        st.session_state.manual[fid].append({"id": st.session_state.manual_n, "lon": pos[0], "lat": pos[1], "land": land})
+        return True
     if tool == "add":
         if hit is None:
             st.toast(t("click_no_face"), icon=":material/roofing:")
             return False
         st.session_state.obstacles.append({"lon": c_lon, "lat": c_lat, "w": st.session_state.obst_w,
                                            "l": st.session_state.obst_l, "face_id": hit["id"],
-                                           "kind": st.session_state.obst_kind})
+                                           "kind": st.session_state.obst_kind, "uid": st.session_state.obst_n + 1})
+        st.session_state.obst_n += 1
         return True
     if tool != "del":
         return False
@@ -405,11 +428,56 @@ def clear_all():
         store.pop(f["id"], None)
     custom.clear()
     st.session_state.points = {}
+    st.session_state.manual.clear()
+    st.session_state.manual_pending.clear()
     st.session_state.obstacles.clear()
     st.session_state.shifts.clear()
     st.session_state.show_panels = False
     st.session_state.epoch += 1
     st.session_state.z_ver += 1
+
+
+def set_manual(fid):
+    """Interrupteur « à la main » d'un pan : on part de la disposition automatique (au prochain calcul) ou on la rétablit."""
+    if st.session_state[f"man-{fid}"]:
+        st.session_state.manual_pending.add(fid)
+    else:
+        st.session_state.manual.pop(fid, None)
+        st.session_state.manual_pending.discard(fid)
+
+
+def make_manual(fid):
+    """Le pan fid passe à la main : ses panneaux actuels deviennent des panneaux déplaçables."""
+    pans = geo.layout_to_panels(fe_by_id[fid], layout_by_id[fid], panel_w, panel_l)
+    out = []
+    for lon, lat, land in pans:
+        st.session_state.manual_n += 1
+        out.append({"id": st.session_state.manual_n, "lon": lon, "lat": lat, "land": land})
+    st.session_state.manual[fid] = out
+
+
+def panel_position(fid, lon, lat, land, skip=None):
+    """Position (aimantée) d'un panneau sur le pan fid, ou None si elle est impossible."""
+    others = [(p["lon"], p["lat"], p["land"]) for p in st.session_state.manual.get(fid, []) if p["id"] != skip]
+    return geo.snap_panel(fe_by_id[fid], lon, lat, panel_w, panel_l, land, others, margin, obs_by_face.get(fid, ()))
+
+
+def handle_panel_click(out, tool) -> bool:
+    """Clic simple sur la poignée d'un panneau (outil « Panneaux à la main ») : le panneau est retiré."""
+    tip = (out or {}).get("last_object_clicked_tooltip") or ""
+    m = re.search(r"@p:(\d+):0", tip)
+    if tool != "panels" or not m or "@drag" in tip:
+        return False
+    key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), "p")
+    if st.session_state.get("last_pclick") == key:
+        return False
+    st.session_state.last_pclick = key
+    for lst in st.session_state.manual.values():
+        for p in lst:
+            if p["id"] == int(m.group(1)):
+                lst.remove(p)
+                return True
+    return False
 
 
 def handle_drag(out) -> bool:
@@ -418,7 +486,7 @@ def handle_drag(out) -> bool:
     hauteur."""
     tip = (out or {}).get("last_object_clicked_tooltip") or ""
     pos = (out or {}).get("last_object_clicked")
-    m = re.search(r"@([cohf]):(\d+):(-?[\d.]+)\s*@drag", tip)
+    m = re.search(r"@([cohfp]):(\d+):(-?[\d.]+)\s*@drag", tip)
     if not m or not pos:
         return False
     key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), round(pos["lat"], 7),
@@ -435,6 +503,17 @@ def handle_drag(out) -> bool:
         st.session_state.z_ver += 1
         sync_custom()
         return True
+    if kind == "p":  # panneau a de la disposition à la main : déposé ailleurs
+        for fid, lst in st.session_state.manual.items():
+            for p in lst:
+                if p["id"] == a and fid in fe_by_id:
+                    pos = panel_position(fid, lon, lat, p["land"], skip=a)
+                    if pos is None:
+                        st.toast(t("panel_invalid"), icon=":material/block:")
+                    else:
+                        p["lon"], p["lat"] = pos
+                    return True  # la carte est redessinée à la position retenue
+        return False
     if kind == "f":  # pan dessiné a : glissé d'un bloc, hauteurs inchangées
         face = next((f for f in custom if f["id"] == a), None)
         if face is None:
@@ -566,6 +645,8 @@ def reset_roof():
     st.session_state.shifts.clear()
     st.session_state.custom_faces.clear()
     st.session_state.points = {}
+    st.session_state.manual.clear()
+    st.session_state.manual_pending.clear()
     st.session_state.epoch += 1
     st.session_state.show_panels = False
     st.session_state.cells_loaded = set()
@@ -588,14 +669,18 @@ if not loc:
     st.stop()
 
 tr = t_fixed()
-# Outil de la carte et panneau de dessin : au-dessus de la carte, créés ici pour connaître l'outil tout de suite
-tool_slot, draw_slot, map_c = st.container(), st.container(), st.container()
-with tool_slot:
-    tool = st.segmented_control(t("tool"), ["faces", "draw", "add", "del"],
-                                format_func=lambda k: tr(f"tool_{k}"), default="faces", key="tool_sel",
-                                help=t("tool_help") + " " + t("draw_help")) or "faces"
-if tool not in ("faces", "draw", "add", "del"):  # valeur d'une ancienne session
-    tool = "faces"
+# Barre latérale : tous les réglages (outil, panneaux, à la main, obstacles, pans dessinés, carte). Les conteneurs sont
+# créés ici pour fixer l'ordre ; on les remplit plus bas, quand les données nécessaires sont connues.
+sb = st.sidebar
+sb_tool, sb_params, sb_manual, sb_obst, sb_drawn, sb_map = (sb.container() for _ in range(6))
+draw_slot, map_c = st.container(), st.container()
+TOOLS = ["faces", "draw", "panels", "add", "del"]
+if st.session_state.get("tool_sel") not in TOOLS:  # valeur d'une ancienne session
+    st.session_state.tool_sel = "faces"
+with sb_tool:
+    st.markdown(f"**{t('tool')}**")
+    tool = st.radio(t("tool"), TOOLS, format_func=lambda k: tr(f"tool_{k}"), key="tool_sel",
+                    label_visibility="collapsed", help=t("tool_help") + " " + t("draw_help"))
 with draw_slot:
     if tool == "draw":
         st.info(t("draw_steps"), icon=":material/draw:")
@@ -681,10 +766,6 @@ for fid in sel_ids:
                    "row": f"{all_labels[fid]} · {klass(f['klasse'])} · {f['area']:.0f} m²"})
 for f in custom:
     bfaces.append({**f, "label": f["name"], "on": True, "row": f"{f['name']} · {f['area']:.0f} m²"})
-obs_by_face = {}
-for ob in st.session_state.obstacles:
-    obs_by_face.setdefault(ob["face_id"], []).append(ob)
-
 # Lieu de calcul de la production : centre des pans choisis
 if bfaces:
     pts = [p for f in bfaces for p in f["ring"]]
@@ -708,6 +789,16 @@ def size_changed():
 def obstacle_changed():
     if st.session_state.obst_kind in OBSTACLE_PRESETS:
         st.session_state.obst_w, st.session_state.obst_l = OBSTACLE_PRESETS[st.session_state.obst_kind]
+
+
+def obstacle_kind_changed(uid):
+    kind = st.session_state[f"ok-{uid}"]
+    if kind in OBSTACLE_PRESETS:  # un type connu reprend sa taille standard
+        st.session_state[f"ow-{uid}"], st.session_state[f"ol-{uid}"] = OBSTACLE_PRESETS[kind]
+
+
+def remove_obstacle(uid):
+    st.session_state.obstacles[:] = [o for o in st.session_state.obstacles if o.get("uid") != uid]
 
 
 def nudge(fid, ds, dd):
@@ -744,26 +835,78 @@ def preselect_best():
 map_slot = map_c
 tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 5)], key=STEP_KEY, on_change=lambda: None)
 
-with tab3:
-    h1, h2, h3, h4, h5 = st.columns(5)
-    loss = h1.number_input(t("loss"), 0, 40, 14, help=t("loss_help"))
-    panel_wp = h2.number_input(t("panel_wp"), 100, 800, step=5, key="panel_wp", help=t("panel_wp_help"))
-    panel_l = h3.number_input(t("panel_l"), 0.5, 3.0, step=0.01, key="panel_l", on_change=size_changed)
-    panel_w = h4.number_input(t("panel_w"), 0.5, 2.0, step=0.01, key="panel_w", on_change=size_changed)
-    margin = h5.number_input(t("margin"), 0.0, 2.0, 0.3, step=0.1, help=t("margin_help"))
-    f1, f2 = st.columns([2, 1], vertical_alignment="center")
-    auto = f1.checkbox(t("fill_auto"), True, key="fill_auto")
-    target = f2.number_input(t("n_wanted"), 1, 5000, 20, key="n_target", disabled=auto, help=t("n_wanted_help"))
+with sb_params:
+    st.markdown(f"**{t('sb_panels')}**")
+    loss = st.number_input(t("loss"), 0, 40, 14, help=t("loss_help"), key="loss")
+    panel_wp = st.number_input(t("panel_wp"), 100, 800, step=5, key="panel_wp", help=t("panel_wp_help"))
+    pc1, pc2 = st.columns(2)
+    panel_l = pc1.number_input(t("panel_l"), 0.5, 3.0, step=0.01, key="panel_l", on_change=size_changed)
+    panel_w = pc2.number_input(t("panel_w"), 0.5, 2.0, step=0.01, key="panel_w", on_change=size_changed)
+    margin = st.number_input(t("margin"), 0.0, 2.0, 0.3, step=0.1, help=t("margin_help"), key="margin")
+    auto = st.checkbox(t("fill_auto"), True, key="fill_auto")
+    target = st.number_input(t("n_wanted"), 1, 5000, 20, key="n_target", disabled=auto, help=t("n_wanted_help"))
+    st.selectbox(t("new_orient"), ["same", "portrait", "landscape"], format_func=tr, key="new_orient")
 
-with tab4:
-    o1, o2, o3, o4 = st.columns([2, 1, 1, 2], vertical_alignment="bottom")
-    o1.selectbox(t("obst_type"), [*OBSTACLE_PRESETS, "obst_custom"], format_func=tr, key="obst_kind",
-                 on_change=obstacle_changed)
-    o2.number_input(t("obst_w"), 0.1, 10.0, step=0.05, key="obst_w")
-    o3.number_input(t("obst_l"), 0.1, 10.0, step=0.05, key="obst_l")
-    o4.button(t("obst_clear", n=len(st.session_state.obstacles)), icon=":material/delete:",
-              disabled=not st.session_state.obstacles, on_click=lambda: st.session_state.obstacles.clear())
-    st.caption(t("tool_help"))
+with sb_obst:
+    st.markdown(f"**{t('sb_obst')}**")
+    kinds = [*OBSTACLE_PRESETS, "obst_custom"]
+    st.caption(t("obst_new"))
+    st.selectbox(t("obst_type"), kinds, format_func=tr, key="obst_kind", on_change=obstacle_changed)
+    n1, n2 = st.columns(2)
+    n1.number_input(t("obst_w"), 0.1, 10.0, step=0.05, key="obst_w")
+    n2.number_input(t("obst_l"), 0.1, 10.0, step=0.05, key="obst_l")
+    obs_list = st.session_state.obstacles
+    for ob in obs_list:  # obstacle d'une ancienne session : on lui donne un identifiant
+        if "uid" not in ob:
+            st.session_state.obst_n += 1
+            ob["uid"] = st.session_state.obst_n
+    if obs_list:
+        st.markdown(f"**{t('obst_placed')}**")
+        for ob in obs_list:
+            uid = ob["uid"]
+            with st.expander(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m"):
+                st.selectbox(t("obst_type"), kinds, index=kinds.index(ob["kind"]) if ob["kind"] in kinds else 0,
+                             format_func=tr, key=f"ok-{uid}", on_change=obstacle_kind_changed, args=(uid,))
+                ob["kind"] = st.session_state[f"ok-{uid}"]
+                st.session_state.setdefault(f"ow-{uid}", float(ob["w"]))  # valeur de départ via l'état, pas via value=
+                st.session_state.setdefault(f"ol-{uid}", float(ob["l"]))
+                e1, e2 = st.columns(2)
+                ob["w"] = e1.number_input(t("obst_w"), 0.1, 10.0, step=0.05, key=f"ow-{uid}")
+                ob["l"] = e2.number_input(t("obst_l"), 0.1, 10.0, step=0.05, key=f"ol-{uid}")
+                st.button(t("obst_delete"), icon=":material/delete:", key=f"od-{uid}", on_click=remove_obstacle,
+                          args=(uid,), width="stretch")
+        st.button(t("obst_clear", n=len(obs_list)), icon=":material/delete_sweep:", on_click=obs_list.clear,
+                  width="stretch")
+obs_by_face = {}
+for ob in st.session_state.obstacles:
+    obs_by_face.setdefault(ob["face_id"], []).append(ob)
+
+def recenter():
+    """Recentre la carte sur les pans choisis (ou sur la maison sous l'adresse) : elle est recréée à cet endroit."""
+    st.session_state.recenter = True
+    st.session_state.map_state = None
+    st.session_state.epoch += 1
+
+
+with sb_drawn:
+    if custom:
+        st.markdown(f"**{t('sb_drawn')}**")
+        for f in custom:
+            r1, r2 = st.columns([5, 1], vertical_alignment="center")
+            r1.caption(f"{f['name']} · {f['area']:.0f} m²")
+            r2.button(" ", icon=":material/delete:", key=f"sbdel-{f['id']}", on_click=delete_drawn, args=(f["id"],),
+                      help=t("drawn_delete"))
+        st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", key="sb-drawn-clear",
+                  on_click=delete_drawn, width="stretch")
+with sb_map:
+    st.markdown(f"**{t('sb_map')}**")
+    st.button(t("recenter"), icon=":material/center_focus_strong:", on_click=recenter, width="stretch")
+    st.button(t("clear_sel"), icon=":material/delete_sweep:", key="sb-clear-all", width="stretch",
+              disabled=not (bfaces or st.session_state.obstacles or custom), help=t("clear_sel_help"),
+              on_click=clear_all)
+
+with tab3:
+    st.caption(t("panels_tab_note"))
 
 
 def place(f, n=None):
@@ -781,13 +924,12 @@ def place(f, n=None):
 
 
 # ---- Étape 2 : pans (un seul tableau, valeurs du cadastre modifiables) ------------------------
+fe_by_id, layout_by_id = {}, {}  # pan -> pan avec l'inclinaison/orientation retenues, disposition automatique
 arrays = []  # un dict par pan équipé : tilt, azimuth, kwp, panels, face_id, layout, label, quality
 with tab2:
     st.caption(f"{t('step2_note')} {t('faces_picked', n=len(bfaces))}")
-    b1, b2, _ = st.columns([2, 2, 3])
+    b1, _ = st.columns([2, 5])
     b1.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best, width="stretch")
-    b2.button(t("clear_sel"), icon=":material/delete_sweep:", disabled=not (bfaces or st.session_state.obstacles),
-              width="stretch", help=t("clear_sel_help"), on_click=clear_all)
     inc, wid, lng, tilt, ori, hb, ht = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
                                                        "col_orient_deg", "col_hb", "col_ht"))
     dims0, heights0, rows, index = {}, {}, [], []
@@ -844,6 +986,14 @@ with tab2:
         edited_dims = (abs(r[wid] - w0) > 0.05 or abs(r[lng] - l0) > 0.05) and not f.get("custom")
         # Dimensions inchangées : disposition réelle dans le contour ; modifiées : on recalcule le nombre
         layout, n = place(fe, fit_panels(r[wid], r[lng], panel_w, panel_l, margin) if edited_dims else None)
+        fe_by_id[f["id"]], layout_by_id[f["id"]] = fe, layout
+        if f["id"] in st.session_state.manual_pending:  # passage « à la main » demandé : on part de l'automatique
+            st.session_state.manual_pending.discard(f["id"])
+            make_manual(f["id"])
+        if f["id"] in st.session_state.manual:  # disposition à la main : les panneaux posés, rien d'autre
+            layout = [geo.panel_rect(fe, p["lon"], p["lat"], panel_w, panel_l, p["land"])
+                      for p in st.session_state.manual[f["id"]]]
+            n = len(layout)
         arrays.append({"tilt": tilt_eff, "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
                        "face_id": f["id"], "layout": layout, "label": f["label"], "quality": f["irradiation"]})
 
@@ -853,9 +1003,10 @@ if by_heights:
 
 # Nombre de panneaux voulu : on remplit d'abord les pans les mieux ensoleillés
 capacity = sum(a["panels"] for a in arrays)
+manual_ids = set(st.session_state.manual)  # les pans à la main gardent leurs panneaux
 if not auto:
-    left = target
-    for a in sorted(arrays, key=lambda a: -a["quality"]):
+    left = max(target - sum(a["panels"] for a in arrays if a["face_id"] in manual_ids), 0)
+    for a in sorted((a for a in arrays if a["face_id"] not in manual_ids), key=lambda a: -a["quality"]):
         take = min(a["panels"], left)
         left -= take
         a["layout"], a["panels"], a["kwp"] = a["layout"][:take], take, take * panel_wp / 1000
@@ -885,6 +1036,19 @@ with tab4:
 with tab4:
     next_button(5)
 
+with sb_manual:
+    if bfaces:
+        st.markdown(f"**{t('sb_manual')}**")
+        st.caption(t("manual_help"))
+        count = {a["face_id"]: a["panels"] for a in arrays}
+        for f in bfaces:
+            fid = f["id"]
+            if count.get(fid, 0) == 0 and fid not in st.session_state.manual:
+                continue  # un pan sans panneau passe à la main d'un clic sur lui (outil « Panneaux à la main »)
+            st.session_state[f"man-{fid}"] = fid in st.session_state.manual or fid in st.session_state.manual_pending
+            n_txt = f" ({t('panels_count', n=count.get(fid, 0))})" if fid in st.session_state.manual else ""
+            st.toggle(f"{f['label']} · {t('by_hand')}{n_txt}", key=f"man-{fid}", on_change=set_manual, args=(fid,))
+
 # ---- Carte : vue aérienne swisstopo --------------------------------------------------------------
 with map_slot:
     show = st.session_state.show_panels
@@ -899,7 +1063,9 @@ with map_slot:
         st.session_state.map_state = state
         st.session_state.base_view = st.session_state.get("live_view") if prev and prev[1] == fit_sig else None
     view = st.session_state.get("base_view")
-    pts = [(y, x) for f in faces if f["building_id"] == ctx for x, y in f["ring"]]
+    recentre = st.session_state.pop("recenter", False)  # « Recentrer » : on cadre les pans choisis
+    pts = [(y, x) for f in (bfaces if recentre and bfaces else [f for f in faces if f["building_id"] == ctx])
+           for x, y in f["ring"]]
     bounds = [[min(p[0] for p in pts), min(p[1] for p in pts)],
               [max(p[0] for p in pts), max(p[1] for p in pts)]] if pts else None
     center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2] if bounds else [lat, lon]
@@ -962,6 +1128,15 @@ with map_slot:
                     '<div style="text-align:center;font:600 11px Inter,sans-serif;color:#fff;'
                     f'text-shadow:0 0 3px #000,0 0 3px #000">{side_length(p, q):.2f} m</div>')),
             ).add_to(dyn)
+    for fid, lst in (st.session_state.manual.items() if show and tool == "panels" else []):  # poignées des panneaux
+        for p in (lst if fid in fe_by_id else []):
+            folium.Marker(
+                [p["lat"], p["lon"]], draggable=True,
+                tooltip=f'{t("panel_handle")}<span style="display:none">@p:{p["id"]}:0</span>',
+                icon=folium.DivIcon(icon_size=(16, 16), icon_anchor=(8, 8), html=(
+                    '<div style="width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #3987e5;'
+                    'box-shadow:0 0 3px rgba(0,0,0,.7);cursor:grab"></div>')),
+            ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
@@ -985,7 +1160,7 @@ with map_slot:
     if out and out.get("center") and out.get("zoom"):  # vue actuelle, pour recréer la carte au même endroit
         st.session_state.live_view = {"center": [out["center"]["lat"], out["center"]["lng"]], "zoom": out["zoom"]}
     st.caption(t("map_note"))
-    changed = handle_drawings(out) or handle_drag(out) or handle_click(out, tool)
+    changed = handle_drawings(out) or handle_drag(out) or handle_panel_click(out, tool) or handle_click(out, tool)
     if out and valid_bounds(out.get("bounds")):  # les toits se chargent autour de la vue, sans cliquer
         st.session_state.live_bounds = out["bounds"]
         if (out.get("zoom") or 0) >= 17:

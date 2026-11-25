@@ -43,6 +43,12 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
   centre pour glisser tout le pan, hauteurs inchangées (ses coins partagés sont détachés, et fusionnent à la dépose
   près d'un coin voisin) ; largeur et longueur du pan modifiables (le pan s'étire autour de son centre)
 - « Tout effacer » efface aussi les pans dessinés, les obstacles et les positions de panneaux
+- Barre latérale à gauche : outil de la carte, réglages des panneaux, panneaux à la main, obstacles, pans dessinés,
+  recentrer la carte, tout effacer
+- Obstacles posés modifiables (type, largeur, longueur) et supprimables un par un dans la barre latérale
+- Panneaux à la main : un pan peut passer « à la main » ; on glisse les panneaux (aimantation 30 cm aux bords des
+  autres panneaux et aux marges, refus si hors du pan ou sur un panneau ou un obstacle), on en ajoute par un clic sur
+  le pan (orientation « comme les voisins », portrait ou paysage) et on en retire par un clic sur sa poignée
 - Coins partagés : un coin posé ou lâché à moins de 60 cm d'un coin d'un autre pan fusionne avec lui (un seul point,
   une seule hauteur) ; hauteurs de départ recalées sur les toits voisins (pans dessinés, puis pan du cadastre sous
   le tracé), avec la pente du pan remplacé conservée
@@ -60,7 +66,7 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
 - Pans dessinés : accrochage des coins sur les coins des pans voisins (toits en croix), sans retracer.
 - **Découpage final des sections** : le parcours complet d'abord, puis on organise ce que voit l'utilisateur
   (ne pas le charger de tout dès le début).
-- Pas de panneaux individuels sélectionnables ni de tailles de panneaux différentes sur un même pan.
+- Pas de tailles de panneaux différentes sur un même pan ; panneaux à la main : pas de rotation d'un panneau déjà posé.
 - Vérifier au navigateur : le bug de la cellule en surimpression du tableau (cellules en lecture seule) devrait
   avoir disparu, car le tableau n'a plus de colonne en lecture seule.
 
