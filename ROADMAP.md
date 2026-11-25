@@ -17,7 +17,9 @@ Les règles métier marquées « à vérifier » doivent être confirmées avant
 Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateur) :
 
 - Page en 5 étapes (onglets) : toit, pans, panneaux, obstacles et position, production ; hypothèses sous la carte
-- Plusieurs bâtiments sélectionnables ; au clic sur un autre toit, fenêtre « ajouter / remplacer / annuler »
+- Parcours guidé : choisir la maison (aucun panneau), cliquer les pans sur la carte (ou dessiner un pan), puis
+  « Suivant » pose les panneaux ; chaque étape a son bouton « Suivant » qui ouvre l'onglet suivant
+- Plusieurs bâtiments possibles ; au clic sur un autre bâtiment, fenêtre « ajouter / remplacer / annuler »
 - Un seul tableau de pans (valeurs du cadastre modifiables : largeur, longueur, inclinaison, orientation, hauteur) ;
   les modes simple/détaillé sont supprimés
 - Obstacles (fenêtre de toit, cheminée, autre) posés au clic, les panneaux les évitent (10 cm de dégagement)

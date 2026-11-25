@@ -161,7 +161,9 @@ CUSTOM_ID0 = 10**9  # identifiants des pans dessinés (les pans du cadastre sont
 store = st.session_state.setdefault("face_store", {})  # tous les pans chargés depuis le début (id -> pan)
 custom = st.session_state.setdefault("custom_faces", [])  # pans dessinés à la main
 seen_drawings = st.session_state.setdefault("seen_drawings", set())
-st.session_state.setdefault("buildings", [])  # bâtiments choisis, dans l'ordre du choix
+st.session_state.setdefault("sel_faces", [])  # pans choisis (ids), dans l'ordre du choix
+st.session_state.setdefault("ctx_building", None)  # maison affichée avant le choix des pans
+st.session_state.setdefault("show_panels", False)  # les panneaux ne sont posés qu'après « Suivant »
 st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
 st.session_state.setdefault("shifts", {})  # face_id -> décalage (s, d) en m du champ de panneaux
 
@@ -179,7 +181,7 @@ def handle_click(out, tool) -> bool:
     c_lat, c_lon = pos
     find = lambda: next((f for f in store.values() if geo.contains(f["ring"], c_lon, c_lat)), None)  # noqa: E731
     hit = find()
-    if tool == "pick":
+    if tool in ("house", "faces"):
         if hit is None:  # toit hors du périmètre chargé : on charge les toits autour du clic
             try:
                 store.update({f["id"]: f for f in roofs(c_lat, c_lon)})
@@ -191,17 +193,20 @@ def handle_click(out, tool) -> bool:
                 return False
             if not st.session_state.get("loc"):
                 st.session_state.loc = {"lat": c_lat, "lon": c_lon}
-        b, sel = hit["building_id"], st.session_state.buildings
-        if b == -1:  # pan dessiné : pas un bâtiment
+        b, fid = hit["building_id"], hit["id"]
+        if b == -1:  # pan dessiné : ni maison ni pan du cadastre
             return False
-        if b in sel:
-            if len(sel) == 1:  # on garde toujours au moins un bâtiment
-                return False
-            sel.remove(b)
-        elif sel:  # un toit est déjà choisi : on demande avant de changer (dialogue ouvert au prochain tour)
-            st.session_state.pending_building = b
-        else:
-            sel.append(b)
+        sel = st.session_state.sel_faces
+        if tool == "faces" and fid in sel:  # un second clic retire le pan
+            sel.remove(fid)
+            return True
+        if sel and b not in {store[i]["building_id"] for i in sel if i in store}:
+            # un autre bâtiment que celui déjà équipé : on demande avant (dialogue ouvert au prochain tour)
+            st.session_state.pending = {"b": b, "fid": fid if tool == "faces" else None}
+            return True
+        st.session_state.ctx_building = b
+        if tool == "faces":
+            sel.append(fid)
         return True
     if tool == "add":
         if hit is None:
@@ -243,20 +248,30 @@ def handle_drawings(out) -> bool:
 
 
 @st.dialog(t("switch_title"))
-def confirm_switch(b):
+def confirm_switch(b, fid):
     st.write(t("switch_text"))
     add, replace, cancel = st.columns(3)
     if add.button(t("switch_add"), icon=":material/add:", width="stretch"):
-        st.session_state.buildings.append(b)
+        st.session_state.ctx_building = b
+        if fid is not None:
+            st.session_state.sel_faces.append(fid)
         st.rerun()
     if replace.button(t("switch_replace"), icon=":material/swap_horiz:", type="primary", width="stretch"):
-        st.session_state.buildings = [b]
-        st.session_state.obstacles.clear()
-        st.session_state.shifts.clear()
-        st.session_state.custom_faces.clear()
+        reset_roof()
+        st.session_state.ctx_building = b
+        st.session_state.sel_faces = [] if fid is None else [fid]
         st.rerun()
     if cancel.button(t("switch_cancel"), width="stretch"):
         st.rerun()
+
+
+def reset_roof():
+    """Nouveau toit : on efface les choix du précédent (pans, obstacles, positions, pans dessinés)."""
+    st.session_state.sel_faces = []
+    st.session_state.obstacles.clear()
+    st.session_state.shifts.clear()
+    st.session_state.custom_faces.clear()
+    st.session_state.show_panels = False
 
 
 # Le lieu sélectionné vient de l'adresse tapée ou d'un clic sur un toit de la carte
@@ -274,7 +289,8 @@ if query:
         if st.session_state.get("addr_sig") != (query, addr["label"]):  # nouvelle adresse : on s'y place
             st.session_state.addr_sig = (query, addr["label"])
             st.session_state.loc = {"lat": addr["lat"], "lon": addr["lon"]}
-            st.session_state.buildings = []
+            reset_roof()
+            st.session_state.ctx_building = None
 
 loc = st.session_state.get("loc")
 if not loc:
@@ -295,26 +311,28 @@ faces = list(store.values())
 buildings = geo.buildings_by_distance(near, loc["lat"], loc["lon"])
 tr = t_fixed()
 
-# Bâtiments actifs : ceux sur lesquels on a cliqué (plusieurs possibles), sinon celui sous l'adresse
+# Maison affichée : celle des pans choisis, sinon celle sur laquelle on a cliqué, sinon celle sous l'adresse
 present = {f["building_id"] for f in faces}
-selected = [b for b in st.session_state.buildings if b in present]
-if not selected and buildings:
-    selected = [buildings[0]]
-st.session_state.buildings = selected
-sel_key = "-".join(map(str, selected))
+sel_ids = [i for i in st.session_state.sel_faces if i in store]
+st.session_state.sel_faces = sel_ids
+ctx = st.session_state.ctx_building if st.session_state.ctx_building in present else (buildings[0] if buildings else None)
+shown = list(dict.fromkeys([store[i]["building_id"] for i in sel_ids] + ([ctx] if ctx is not None else [])))
+sel_key = "-".join(map(str, sel_ids))
 
-pending = st.session_state.pop("pending_building", None)
-if pending is not None and pending not in selected:
-    confirm_switch(pending)  # fermer la fenêtre = annuler
+pending = st.session_state.pop("pending", None)
+if pending and pending["b"] not in shown:
+    confirm_switch(pending["b"], pending["fid"])  # fermer la fenêtre = annuler
 
-bfaces = []  # pans des bâtiments choisis, puis pans dessinés ; « Pan 2 » ou « Pan 1.2 » s'il y a plusieurs bâtiments
-for bi, b in enumerate(selected, 1):
-    fs = [f for f in faces if f["building_id"] == b]
-    best = min(3, max(f["klasse"] for f in fs))  # cochés par défaut : aptitude bonne ou mieux, sinon les meilleurs
-    for i, f in enumerate(fs, 1):
-        label = f"{t('col_face')} {bi}.{i}" if len(selected) > 1 else f"{t('col_face')} {i}"
-        bfaces.append({**f, "label": label, "on": f["klasse"] >= best,
-                       "row": f"{label} · {klass(f['klasse'])} · {f['area']:.0f} m²"})
+bfaces = []  # pans choisis puis pans dessinés ; « Pan 2 » ou « Pan 1.2 » s'il y a plusieurs bâtiments
+all_labels = {}
+for bi, b in enumerate(shown, 1):
+    for i, f in enumerate([f for f in faces if f["building_id"] == b], 1):
+        label = f"{t('col_face')} {bi}.{i}" if len(shown) > 1 else f"{t('col_face')} {i}"
+        all_labels[f["id"]] = label
+for fid in sel_ids:
+    f = store[fid]
+    bfaces.append({**f, "label": all_labels[fid], "on": True,
+                   "row": f"{all_labels[fid]} · {klass(f['klasse'])} · {f['area']:.0f} m²"})
 for f in custom:
     bfaces.append({**f, "label": f["name"], "on": True, "row": f"{f['name']} · {f['area']:.0f} m²"})
 obs_by_face = {}
@@ -351,13 +369,39 @@ def nudge(fid, ds, dd):
     st.session_state.shifts[fid] = (cur[0] + ds, cur[1] + dd)
 
 
-# Page : carte, puis les étapes en onglets. Les onglets sont toujours tous exécutés, donc les réglages
-# d'une étape restent quand on en regarde une autre.
+STEP_KEY = f"steps-{lang()}"
+
+
+def goto(step, tool=None, show=False):
+    """Bouton « Suivant » : ouvre l'étape, change l'outil de la carte, et pose les panneaux si show."""
+    st.session_state[STEP_KEY] = t(f"step_{step}")
+    if tool:
+        st.session_state.tool_sel = tool
+    if show:
+        st.session_state.show_panels = True
+
+
+def next_button(step, tool=None, show=False, disabled=False):
+    st.button(t("next"), icon=":material/arrow_forward:", type="primary", on_click=goto, args=(step, tool, show),
+              disabled=disabled, key=f"next-{step}")
+
+
+def preselect_best():
+    """Coche les pans d'aptitude bonne ou mieux de la maison affichée, sinon ses meilleurs."""
+    for b in shown:
+        fs = [f for f in faces if f["building_id"] == b and f["id"] not in st.session_state.sel_faces]
+        best = min(3, max((f["klasse"] for f in fs), default=0))
+        st.session_state.sel_faces += [f["id"] for f in fs if f["klasse"] >= best > 0]
+
+
+# Page : carte, puis les étapes en onglets. Les onglets sont tous exécutés, donc les réglages d'une étape
+# restent quand on en regarde une autre ; « Suivant » ouvre l'onglet suivant.
 map_slot = st.container()
-tab1, tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 6)])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 6)], key=STEP_KEY, on_change=lambda: None)
 
 with tab1:
-    st.caption(t("step1_note", n=len(selected)))
+    st.caption(t("step1_note"))
+    next_button(2, "faces")
 
 with tab3:
     h1, h2, h3, h4, h5 = st.columns(5)
@@ -398,7 +442,8 @@ def place(f, n=None):
 # ---- Étape 2 : pans (un seul tableau, valeurs du cadastre modifiables) ------------------------
 arrays = []  # un dict par pan équipé : tilt, azimuth, kwp, panels, face_id, layout, label, quality
 with tab2:
-    st.caption(t("step2_note"))
+    st.caption(f"{t('step2_note')} {t('faces_picked', n=len(bfaces))}")
+    st.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best)
     inc, wid, lng, tilt, ori, hgt = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
                                                     "col_orient_deg", "col_height"))
     dims0, rows, index = {}, [], []
@@ -407,11 +452,11 @@ with tab2:
         rows.append({inc: f["on"], wid: dims0[f["id"]][0], lng: dims0[f["id"]][1], tilt: round(f["tilt"]),
                      ori: round(f["azimuth"]), hgt: 0.0, "face_id": f["id"]})
         index.append(f["row"])
-    if not rows:  # rien de détecté : un pan à la main, sans position sur la carte
+    if not rows and not any(f["building_id"] in shown for f in faces):  # rien de détecté : un pan à la main, sans position sur la carte
         rows.append({inc: True, wid: 10.0, lng: 6.0, tilt: 30, ori: 0, hgt: 0.0, "face_id": None})
         index.append(f"{t('col_face')} 1")
     edited = st.data_editor(
-        pd.DataFrame(rows, index=index), width="stretch", num_rows="dynamic", key=f"faces-{sel_key}-{lang()}",
+        pd.DataFrame(rows, index=index, columns=[inc, wid, lng, tilt, ori, hgt, "face_id"]), width="stretch", num_rows="dynamic", key=f"faces-{sel_key}-{lang()}",
         column_config={
             inc: st.column_config.CheckboxColumn(default=True),
             wid: st.column_config.NumberColumn(min_value=0.5, max_value=200, step=0.1, default=8.0),
@@ -425,6 +470,7 @@ with tab2:
     )
     if custom:
         st.button(t("drawn_clear", n=len(custom)), icon=":material/delete:", on_click=custom.clear)
+    next_button(3, show=True, disabled=not bfaces)
     by_id = {f["id"]: f for f in bfaces}
     for name, r in edited.dropna(subset=[wid, lng, tilt, ori]).iterrows():
         if not r[inc]:
@@ -453,6 +499,7 @@ if not auto:
         a["layout"], a["panels"], a["kwp"] = a["layout"][:take], take, take * panel_wp / 1000
 with tab3:
     st.caption(t("n_capacity", n=capacity))
+    next_button(4, "add")
 
 # ---- Étape 4 : position des panneaux (aimantation) --------------------------------------------
 with tab4:
@@ -473,16 +520,20 @@ with tab4:
         row[5].button(t("shift_reset"), key=f"reset-{fid}", width="stretch",
                       on_click=lambda i=fid: st.session_state.shifts.pop(i, None))
 
+with tab4:
+    next_button(5)
+
 # ---- Carte : vue aérienne swisstopo --------------------------------------------------------------
 with map_slot:
-    tool = st.segmented_control(t("tool"), ["pick", "draw", "add", "del"], format_func=lambda k: tr(f"tool_{k}"),
-                                default="pick", key="tool_sel", help=t("tool_help") + "\n\n" + t("draw_help")
-                                ) or "pick"
-    equipped = {a["face_id"] for a in arrays if a["kwp"] > 0}
+    tool = st.segmented_control(t("tool"), ["house", "faces", "draw", "add", "del"], format_func=lambda k: tr(f"tool_{k}"),
+                                default="house", key="tool_sel", help=t("tool_help") + "\n\n" + t("draw_help")
+                                ) or "house"
+    show = st.session_state.show_panels
+    equipped = {a["face_id"] for a in arrays if a["kwp"] > 0} if show else set(sel_ids)
     fmap = base_map([lat, lon], 20, draw=tool == "draw")
     for f in faces:
         is_custom = f.get("custom", False)
-        mine = is_custom or f["building_id"] in selected
+        mine = is_custom or f["building_id"] in shown
         fill = PANEL if f["id"] in equipped else CUSTOM if is_custom else CLASS_COLORS[f["klasse"]]
         tip = (f"{f['name']} · {f['area']:.0f} m²" if is_custom else
                f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}")
@@ -492,7 +543,7 @@ with map_slot:
             fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.28, tooltip=tip,
             interactive=tool != "draw",
         ).add_to(fmap)
-    for a in arrays:  # les panneaux, un rectangle chacun
+    for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
             folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
                            fill_color="#16233a", fill_opacity=0.92, interactive=False).add_to(fmap)
@@ -500,7 +551,7 @@ with map_slot:
         folium.Polygon([(y, x) for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)], color="#ffffff",
                        weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9,
                        tooltip=f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", interactive=False).add_to(fmap)
-    pts = [(y, x) for f in bfaces for x, y in f["ring"]]
+    pts = [(y, x) for f in faces if f["building_id"] in shown or f.get("custom") for x, y in f["ring"]]
     if pts:
         fmap.fit_bounds([[min(p[0] for p in pts), min(p[1] for p in pts)],
                          [max(p[0] for p in pts), max(p[1] for p in pts)]], padding=(30, 30))
@@ -513,7 +564,10 @@ with map_slot:
 # ---- Étape 5 : production ---------------------------------------------------------------------
 with tab5:
     kwp = sum(a["kwp"] for a in arrays)
-    if kwp <= 0:
+    if not st.session_state.show_panels:
+        st.session_state.pop("system", None)
+        st.info(t("show_first"), icon=":material/solar_power:")
+    elif kwp <= 0:
         st.session_state.pop("system", None)
         st.info(t("pick_face"), icon=":material/solar_power:")
     else:
