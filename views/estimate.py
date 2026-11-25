@@ -209,6 +209,8 @@ st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
 st.session_state.setdefault("epoch", 0)  # change quand il faut recréer la carte (efface le tracé en cours)
 st.session_state.setdefault("custom_n", 0)
 st.session_state.setdefault("obst_n", 0)
+st.session_state.setdefault("active_face", None)  # pan dessiné en cours de modification : lui seul a ses poignées
+st.session_state.setdefault("active_obst", None)  # obstacle en cours de modification
 st.session_state.setdefault("manual", {})  # pan -> panneaux posés à la main [{id, lon, lat, land}]
 st.session_state.setdefault("manual_n", 0)
 st.session_state.setdefault("manual_pending", set())  # pans à passer à la main au prochain calcul
@@ -293,9 +295,14 @@ def handle_click(out, tool) -> bool:
         st.session_state.manual[fid].append({"id": st.session_state.manual_n, "lon": pos[0], "lat": pos[1], "land": land})
         return True
     if tool == "add":
+        for ob in reversed(st.session_state.obstacles):  # clic sur un obstacle existant : il devient l'actif
+            if ob["face_id"] in store and geo.contains(geo.obstacle_rect(store[ob["face_id"]], ob), c_lon, c_lat):
+                st.session_state.active_obst = ob["uid"]
+                return True
         if hit is None:
             st.toast(t("click_no_face"), icon=":material/roofing:")
             return False
+        st.session_state.active_obst = st.session_state.obst_n + 1
         st.session_state.obstacles.append({"lon": c_lon, "lat": c_lat, "w": st.session_state.obst_w,
                                            "l": st.session_state.obst_l, "face_id": hit["id"],
                                            "kind": st.session_state.obst_kind, "uid": st.session_state.obst_n + 1})
@@ -428,6 +435,7 @@ def clear_all():
         store.pop(f["id"], None)
     custom.clear()
     st.session_state.points = {}
+    st.session_state.active_face = st.session_state.active_obst = None
     st.session_state.manual.clear()
     st.session_state.manual_pending.clear()
     st.session_state.obstacles.clear()
@@ -459,7 +467,9 @@ def make_manual(fid):
 def panel_position(fid, lon, lat, land, skip=None):
     """Position (aimantée) d'un panneau sur le pan fid, ou None si elle est impossible."""
     others = [(p["lon"], p["lat"], p["land"]) for p in st.session_state.manual.get(fid, []) if p["id"] != skip]
-    return geo.snap_panel(fe_by_id[fid], lon, lat, panel_w, panel_l, land, others, margin, obs_by_face.get(fid, ()))
+    # À la main, un panneau peut aller sur un obstacle (c'est vous qui décidez) : seuls le contour du pan et les
+    # autres panneaux limitent
+    return geo.snap_panel(fe_by_id[fid], lon, lat, panel_w, panel_l, land, others, margin)
 
 
 def handle_panel_click(out, tool) -> bool:
@@ -610,6 +620,7 @@ def handle_drawings(out) -> bool:
                        "tilt": tilt0, "azimuth": az0, "klasse": 0, "area": 0.0, "custom": True,
                        "irradiation": main["irradiation"] if main else 0.0, "replaced": replaced,
                        "name": f"{t('drawn_face')} {n}"})
+        st.session_state.active_face = CUSTOM_ID0 + n
         sync_custom()
         if replaced:
             st.toast(t("drawn_replaced", n=len(replaced), tilt=f"{tilt0:.0f}"), icon=":material/draw:")
@@ -627,6 +638,8 @@ def delete_drawn(fid=None):
         if fid is None or f["id"] == fid:
             sel += [i for i in f.get("replaced", []) if i not in sel and i in store]
     gone = {f["id"] for f in custom if fid is None or f["id"] == fid}
+    if st.session_state.active_face in gone:
+        st.session_state.active_face = None
     custom[:] = [f for f in custom if f["id"] not in gone]
     st.session_state.obstacles[:] = [o for o in st.session_state.obstacles if o["face_id"] not in gone]
     for i in gone:
@@ -645,6 +658,7 @@ def reset_roof():
     st.session_state.shifts.clear()
     st.session_state.custom_faces.clear()
     st.session_state.points = {}
+    st.session_state.active_face = st.session_state.active_obst = None
     st.session_state.manual.clear()
     st.session_state.manual_pending.clear()
     st.session_state.epoch += 1
@@ -684,31 +698,28 @@ with sb_tool:
 with draw_slot:
     if tool == "draw":
         st.info(t("draw_steps"), icon=":material/draw:")
+        sync_custom()
+        act = next((f for f in custom if f["id"] == st.session_state.active_face), None)
         if not custom:
             st.caption(t("drawn_none"))
-    if custom:
-        st.markdown(f"**{t('drawn_title')}**")
-        pts = st.session_state.points
-        used = sorted(pts)
-        owners = {p: [f["name"] for f in custom if p in f["pids"]] for p in used}
-        st.caption(t("corner_heights"))
-        # Un seul tableau pour tous les points : un point partagé entre deux pans n'y figure qu'une fois
-        ed = st.data_editor(
-            pd.DataFrame({t("col_height"): [pts[p][2] for p in used]},
-                         index=[f"{t('corner')} {p} · {', '.join(owners[p])}" for p in used]),
-            key=f"pts-{lang()}-{st.session_state.z_ver}-{'-'.join(map(str, used))}", width="stretch",
-            column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
-        for p, v in zip(used, ed[t("col_height")]):
-            if pd.notna(v) and abs(float(v) - pts[p][2]) > 1e-9:
-                pts[p][2] = float(v)
-        sync_custom()
-        for f in custom:
-            c1, c2 = st.columns([6, 1], vertical_alignment="center")
-            c1.markdown(f"**{f['name']}** · {f['area']:.0f} m² · {f['tilt']:.0f}° · {orientation(f['azimuth'])} · "
-                        f"{t('corner')} {', '.join(map(str, f['pids']))}")
-            c2.button(" ", icon=":material/delete:", key=f"del-{f['id']}", help=t("drawn_delete"),
-                      on_click=delete_drawn, args=(f["id"],), width="stretch")
-            with st.expander(f"{t('sides_title')} · {f['name']}"):
+        elif act is None:
+            st.caption(t("pick_drawn"))
+        else:  # seul le pan en cours de modification a ses points, hauteurs et côtés
+            pts = st.session_state.points
+            used = list(act["pids"])
+            st.markdown(f"**{act['name']}** · {act['area']:.0f} m² · {act['tilt']:.0f}° · {orientation(act['azimuth'])}")
+            st.caption(t("corner_heights"))
+            ed = st.data_editor(
+                pd.DataFrame({t("col_height"): [pts[p][2] for p in used]},
+                             index=[f"{t('corner')} {p}" for p in used]),
+                key=f"pts-{lang()}-{st.session_state.z_ver}-{act['id']}-{'-'.join(map(str, used))}", width="stretch",
+                column_config={t("col_height"): st.column_config.NumberColumn(min_value=-50, max_value=200, step=0.1)})
+            for p, v in zip(used, ed[t("col_height")]):
+                if pd.notna(v) and abs(float(v) - pts[p][2]) > 1e-9:
+                    pts[p][2] = float(v)
+            sync_custom()
+            f = act
+            with st.expander(f"{t('sides_title')} · {f['name']}", expanded=True):
                 st.caption(t("sides_help"))
                 w0, l0 = geo.face_dimensions(f)  # largeur le long du faîte, longueur dans la pente
                 sig = f"{w0:.2f}-{l0:.2f}"  # la clé suit la géométrie : après un déplacement, la saisie repart de la valeur réelle
@@ -735,7 +746,6 @@ with draw_slot:
                         sync_custom()
                         st.session_state.z_ver += 1
                         break
-        st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", on_click=delete_drawn)
 sync_custom()  # inclinaison et orientation déduites des hauteurs des coins
 
 try:
@@ -799,6 +809,20 @@ def obstacle_kind_changed(uid):
 
 def remove_obstacle(uid):
     st.session_state.obstacles[:] = [o for o in st.session_state.obstacles if o.get("uid") != uid]
+    if st.session_state.active_obst == uid:
+        st.session_state.active_obst = None
+
+
+def edit_face(fid):
+    """Bouton « Modifier » d'un pan dessiné : ses points, hauteurs et côtés apparaissent, avec l'outil de dessin."""
+    st.session_state.active_face = fid
+    st.session_state.tool_sel = "draw"
+
+
+def edit_obstacle(uid):
+    """Bouton « Déplacer » d'un obstacle : sa poignée apparaît sur la carte (outil « Ajouter un obstacle »)."""
+    st.session_state.active_obst = uid
+    st.session_state.tool_sel = "add"
 
 
 def nudge(fid, ds, dd):
@@ -864,7 +888,7 @@ with sb_obst:
         st.markdown(f"**{t('obst_placed')}**")
         for ob in obs_list:
             uid = ob["uid"]
-            with st.expander(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m"):
+            with st.expander(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", expanded=ob["uid"] == st.session_state.active_obst):
                 st.selectbox(t("obst_type"), kinds, index=kinds.index(ob["kind"]) if ob["kind"] in kinds else 0,
                              format_func=tr, key=f"ok-{uid}", on_change=obstacle_kind_changed, args=(uid,))
                 ob["kind"] = st.session_state[f"ok-{uid}"]
@@ -873,6 +897,8 @@ with sb_obst:
                 e1, e2 = st.columns(2)
                 ob["w"] = e1.number_input(t("obst_w"), 0.1, 10.0, step=0.05, key=f"ow-{uid}")
                 ob["l"] = e2.number_input(t("obst_l"), 0.1, 10.0, step=0.05, key=f"ol-{uid}")
+                st.button(t("obst_move"), icon=":material/open_with:", key=f"om-{uid}", on_click=edit_obstacle,
+                          args=(uid,), width="stretch")
                 st.button(t("obst_delete"), icon=":material/delete:", key=f"od-{uid}", on_click=remove_obstacle,
                           args=(uid,), width="stretch")
         st.button(t("obst_clear", n=len(obs_list)), icon=":material/delete_sweep:", on_click=obs_list.clear,
@@ -892,9 +918,12 @@ with sb_drawn:
     if custom:
         st.markdown(f"**{t('sb_drawn')}**")
         for f in custom:
-            r1, r2 = st.columns([5, 1], vertical_alignment="center")
-            r1.caption(f"{f['name']} · {f['area']:.0f} m²")
-            r2.button(" ", icon=":material/delete:", key=f"sbdel-{f['id']}", on_click=delete_drawn, args=(f["id"],),
+            r1, r2, r3 = st.columns([4, 1, 1], vertical_alignment="center")
+            name = f"**{f['name']}**" if f["id"] == st.session_state.active_face else f["name"]
+            r1.markdown(f"{name} · {f['area']:.0f} m²")
+            r2.button(" ", icon=":material/edit:", key=f"sbedit-{f['id']}", on_click=edit_face, args=(f["id"],),
+                      help=t("drawn_edit"))
+            r3.button(" ", icon=":material/delete:", key=f"sbdel-{f['id']}", on_click=delete_drawn, args=(f["id"],),
                       help=t("drawn_delete"))
         st.button(t("drawn_clear", n=len(custom)), icon=":material/delete_sweep:", key="sb-drawn-clear",
                   on_click=delete_drawn, width="stretch")
@@ -1094,7 +1123,8 @@ with map_slot:
             weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
             fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
-    for pid, (x, y, z) in st.session_state.points.items():  # points des pans dessinés : numéro, hauteur modifiable
+    act_face = next((f for f in custom if f["id"] == st.session_state.active_face), None) if tool == "draw" else None
+    for pid, (x, y, z) in ({p: st.session_state.points[p] for p in act_face["pids"]} if act_face else {}).items():  # points du pan actif
         folium.Marker(
             [y, x], draggable=True,
             tooltip=(f"{t('corner')} {pid} · {z:.2f} m ({t('drag_hint')})"
@@ -1108,7 +1138,7 @@ with map_slot:
                 'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
                 '</div>')),
         ).add_to(dyn)
-    for f in custom:  # poignée au centre de chaque pan dessiné : on le glisse d'un bloc, hauteurs inchangées
+    for f in ([act_face] if act_face else []):  # poignée au centre du pan actif : on le glisse d'un bloc
         pp = [st.session_state.points[p] for p in f["pids"]]
         folium.Marker(
             [sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)], draggable=True,
@@ -1118,7 +1148,7 @@ with map_slot:
                 'font:700 16px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:grab;'
                 'box-shadow:0 0 4px rgba(0,0,0,.7)">✥</div>')),
         ).add_to(dyn)
-    for f in custom:  # longueur réelle de chaque côté, au milieu du côté
+    for f in ([act_face] if act_face else []):  # longueur réelle de chaque côté du pan actif, au milieu du côté
         for i, p in enumerate(f["pids"]):
             q = f["pids"][(i + 1) % len(f["pids"])]
             (x1, y1, _), (x2, y2, _) = st.session_state.points[p], st.session_state.points[q]
@@ -1144,6 +1174,8 @@ with map_slot:
     for k, ob in enumerate(st.session_state.obstacles):
         folium.Polygon([(y, x) for x, y in geo.obstacle_rect(store[ob["face_id"]], ob)], color="#ffffff",
                        weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9, interactive=False).add_to(dyn)
+        if tool != "add" or ob["uid"] != st.session_state.active_obst:
+            continue  # la poignée n'existe que pour l'obstacle actif
         folium.Marker(  # poignée au centre, à glisser pour déplacer l'obstacle
             [ob["lat"], ob["lon"]], draggable=True,
             tooltip=(f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m ({t('drag_hint')})"

@@ -13,8 +13,8 @@ It is a personal project by [Luca Rota](https://github.com/LucaRota4). It runs o
 - **Find the roof.** Type an address (suggestions appear while you type) or click the map. Roofs load around the view as you browse, from the Swiss solar cadastre (sonnendach.ch).
 - **Pick faces.** Click the roof faces to equip, from any building. Width, length, tilt, orientation and heights come from the cadastre and can all be corrected; the panel count adapts.
 - **Redraw what is wrong.** A cross roof or a missing face? Draw it yourself. Each corner is a draggable point with its own height, and tilt and orientation follow from the heights. Corners that land close to each other merge, new heights are inferred from the neighbouring roofs, and you can set the real length of every side or slide the whole face.
-- **Place the panels.** Faces are filled automatically inside their real outline (edge margin, panel size and power adjustable). Or switch a face to hand placement: drag panels around with snapping, add them and remove them.
-- **Account for obstacles.** Roof windows, chimneys or custom sizes. Panels avoid them, and you can move, resize and delete them.
+- **Place the panels.** Faces are filled automatically inside their real outline (edge margin, panel size and power adjustable). Or switch a face to hand placement: drag panels around with snapping, add them and remove them, even over an obstacle.
+- **Account for obstacles.** Roof windows, chimneys or custom sizes. Automatic filling avoids them, and you can move, resize and delete them. Handles and numbers only appear for the face or obstacle you are editing.
 - **Estimate the production.** Yearly and monthly yield from PVGIS for each face with its own tilt and orientation, with the assumptions shown next to the numbers.
 - Available in French, German, Italian and English.
 
