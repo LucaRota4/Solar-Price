@@ -83,6 +83,23 @@ def roofs_around(lat: float, lon: float, radius_m: float = 50) -> list[dict]:
     return faces
 
 
+CELL_M = 100  # côté d'une case de chargement des toits
+_K_LON = M_PER_DEG_LAT * math.cos(math.radians(47))  # grille fixe, calée sur la latitude de la Suisse
+
+
+def cells_in_view(south: float, west: float, north: float, east: float) -> list[tuple[int, int]]:
+    """Cases de 100 m (indices entiers) qui recouvrent la vue de la carte."""
+    dlat, dlon = CELL_M / M_PER_DEG_LAT, CELL_M / _K_LON
+    return [(i, j) for i in range(math.floor(west / dlon), math.floor(east / dlon) + 1)
+            for j in range(math.floor(south / dlat), math.floor(north / dlat) + 1)]
+
+
+def cell_center(cell: tuple[int, int]) -> tuple[float, float]:
+    """(lat, lon) du centre d'une case."""
+    i, j = cell
+    return (j + 0.5) * CELL_M / M_PER_DEG_LAT, (i + 0.5) * CELL_M / _K_LON
+
+
 def contains(ring, lon, lat) -> bool:
     inside = False
     for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):

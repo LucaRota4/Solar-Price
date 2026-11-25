@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #wrap { position: relative; }
+  input { box-sizing: border-box; width: 100%; height: 40px; padding: 0 12px; border-radius: 8px; font-size: 15px;
+          border: 1px solid #2a2e36; background: #14171c; color: #f0efec; outline: none; }
+  input:focus { border-color: #3987e5; }
+  input::placeholder { color: #7d818b; }
+  #list { margin: 4px 0 0; padding: 4px; list-style: none; background: #1a1d23; border: 1px solid #2a2e36;
+          border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.45); display: none; }
+  #list li { padding: 8px 10px; border-radius: 6px; color: #f0efec; font-size: 14px; cursor: pointer; }
+  #list li.on, #list li:hover { background: #2a3a55; }
+  #list li.empty { color: #8a8f99; cursor: default; }
+</style></head>
+<body><div id="wrap"><input id="q" type="text" autocomplete="off" spellcheck="false"><ul id="list"></ul></div>
+<script>
+// Composant Streamlit minimal (protocole postMessage), sans build : suggestions d'adresses geo.admin.ch pendant la frappe.
+const API = "https://api3.geo.admin.ch/rest/services/api/SearchServer";
+const q = document.getElementById("q"), list = document.getElementById("list");
+let items = [], active = -1, timer = null, seq = 0, noResultText = "", noMatch = false;
+const send = (type, extra) => window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, extra), "*");
+const resize = () => send("streamlit:setFrameHeight", {height: document.body.scrollHeight + 4});
+const clean = s => s.replace(/<[^>]+>/g, "");
+
+function show() {
+  list.innerHTML = "";
+  items.forEach((it, i) => {
+    const li = document.createElement("li"); li.textContent = it.label; if (i === active) li.className = "on";
+    li.onmousedown = e => { e.preventDefault(); choose(i); };
+    list.appendChild(li);
+  });
+  if (!items.length && noMatch && noResultText) {
+    const li = document.createElement("li"); li.className = "empty"; li.textContent = noResultText; list.appendChild(li);
+  }
+  list.style.display = list.children.length ? "block" : "none";
+  resize();
+}
+function choose(i) {
+  const it = items[i]; if (!it) return;
+  q.value = it.label; items = []; active = -1; noMatch = false; show();
+  send("streamlit:setComponentValue", {value: {label: it.label, lat: it.lat, lon: it.lon, t: Date.now()}, dataType: "json"});
+}
+async function lookup() {
+  const text = q.value.trim(), my = ++seq;
+  if (text.length < 3) { items = []; noMatch = false; show(); return; }
+  try {
+    const r = await fetch(`${API}?searchText=${encodeURIComponent(text)}&type=locations&origins=address&sr=4326&limit=6`);
+    const data = await r.json();
+    if (my !== seq) return;  // une réponse plus récente existe
+    items = (data.results || []).map(x => ({label: clean(x.attrs.label), lat: x.attrs.lat, lon: x.attrs.lon}));
+    active = items.length ? 0 : -1; noMatch = !items.length;
+  } catch (e) { items = []; noMatch = false; }
+  show();
+}
+q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(lookup, 220); });
+q.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" && items.length) { active = (active + 1) % items.length; show(); e.preventDefault(); }
+  else if (e.key === "ArrowUp" && items.length) { active = (active - 1 + items.length) % items.length; show(); e.preventDefault(); }
+  else if (e.key === "Enter") { if (active >= 0) choose(active); e.preventDefault(); }
+  else if (e.key === "Escape") { items = []; show(); }
+});
+q.addEventListener("blur", () => setTimeout(() => { items = []; noMatch = false; show(); }, 120));
+window.addEventListener("message", e => {
+  if (e.data && e.data.type === "streamlit:render") {
+    const a = e.data.args || {}; q.placeholder = a.placeholder || ""; noResultText = a.no_result || "";
+    if (a.value && document.activeElement !== q) q.value = a.value;
+    resize();
+  }
+});
+send("streamlit:componentReady", {apiVersion: 1}); resize();
+</script></body></html>

@@ -10,6 +10,8 @@ from jinja2 import Template
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
+from search_box import address_box
+
 import geo
 import pv
 from http_cache import ApiError
@@ -111,8 +113,8 @@ def search(text):
 
 
 @st.cache_data(show_spinner=False)
-def roofs(lat, lon):
-    return geo.roofs_around(lat, lon)
+def roofs(lat, lon, radius=50):
+    return geo.roofs_around(lat, lon, radius)
 
 
 @st.cache_data(show_spinner=False)
@@ -164,7 +166,7 @@ store = st.session_state.setdefault("face_store", {})  # tous les pans chargés 
 custom = st.session_state.setdefault("custom_faces", [])  # pans dessinés à la main
 seen_drawings = st.session_state.setdefault("seen_drawings", set())
 st.session_state.setdefault("sel_faces", [])  # pans choisis (ids), dans l'ordre du choix
-st.session_state.setdefault("ctx_building", None)  # maison affichée avant le choix des pans
+st.session_state.setdefault("cells_loaded", set())  # cases de 100 m dont les toits sont chargés
 st.session_state.setdefault("show_panels", False)  # les panneaux ne sont posés qu'après « Suivant »
 st.session_state.setdefault("obstacles", [])  # {lon, lat, w, l, face_id, kind}
 st.session_state.setdefault("epoch", 0)  # change quand il faut recréer la carte (efface le tracé en cours)
@@ -172,9 +174,32 @@ st.session_state.setdefault("custom_n", 0)
 st.session_state.setdefault("shifts", {})  # face_id -> décalage (s, d) en m du champ de panneaux
 
 
+def valid_bounds(b) -> bool:
+    """Vue de la carte renvoyée par le composant : vide ou à None tant que la carte n'est pas affichée."""
+    try:
+        return all(isinstance(b[k][c], (int, float)) for k in ("_southWest", "_northEast") for c in ("lat", "lng"))
+    except (TypeError, KeyError):
+        return False
+
+
+def load_cells(bounds, limit=4) -> int:
+    """Charge les toits des cases de 100 m qui recouvrent la vue de la carte (au plus `limit` par tour).
+    Renvoie le nombre de cases chargées."""
+    sw, ne = bounds["_southWest"], bounds["_northEast"]
+    todo = [c for c in geo.cells_in_view(sw["lat"], sw["lng"], ne["lat"], ne["lng"])
+            if c not in st.session_state.cells_loaded][:limit]
+    for c in todo:
+        try:
+            store.update({f["id"]: f for f in roofs(*geo.cell_center(c), 55)})
+        except ApiError as e:
+            fail(e)
+        st.session_state.cells_loaded.add(c)
+    return len(todo)
+
+
 def handle_click(out, tool) -> bool:
-    """Clic sur la carte, selon l'outil : choisir/retirer un bâtiment, poser ou supprimer un obstacle.
-    True si quelque chose a changé."""
+    """Clic sur la carte, selon l'outil : ajouter/retirer un pan (de n'importe quel bâtiment), poser ou
+    supprimer un obstacle. True si quelque chose a changé."""
     click = (out or {}).get("last_clicked")
     if not click or tool == "draw":  # en mode dessin, les clics sont les sommets du polygone
         return False
@@ -185,8 +210,8 @@ def handle_click(out, tool) -> bool:
     c_lat, c_lon = pos
     find = lambda: next((f for f in store.values() if geo.contains(f["ring"], c_lon, c_lat)), None)  # noqa: E731
     hit = find()
-    if tool in ("house", "faces"):
-        if hit is None:  # toit hors du périmètre chargé : on charge les toits autour du clic
+    if tool == "faces":
+        if hit is None:  # toit pas encore chargé : on charge les toits autour du clic
             try:
                 store.update({f["id"]: f for f in roofs(c_lat, c_lon)})
             except ApiError as e:
@@ -197,20 +222,13 @@ def handle_click(out, tool) -> bool:
                 return False
             if not st.session_state.get("loc"):
                 st.session_state.loc = {"lat": c_lat, "lon": c_lon}
-        b, fid = hit["building_id"], hit["id"]
-        if b == -1:  # pan dessiné : ni maison ni pan du cadastre
+        if hit["building_id"] == -1:  # pan dessiné : géré dans le panneau de dessin
             return False
         sel = st.session_state.sel_faces
-        if tool == "faces" and fid in sel:  # un second clic retire le pan
-            sel.remove(fid)
-            return True
-        if sel and b not in {store[i]["building_id"] for i in sel if i in store}:
-            # un autre bâtiment que celui déjà équipé : on demande avant (dialogue ouvert au prochain tour)
-            st.session_state.pending = {"b": b, "fid": fid if tool == "faces" else None}
-            return True
-        st.session_state.ctx_building = b
-        if tool == "faces":
-            sel.append(fid)
+        if hit["id"] in sel:  # un second clic retire le pan
+            sel.remove(hit["id"])
+        else:
+            sel.append(hit["id"])
         return True
     if tool == "add":
         if hit is None:
@@ -264,24 +282,6 @@ def delete_drawn(fid=None):
     st.session_state.epoch += 1
 
 
-@st.dialog(t("switch_title"))
-def confirm_switch(b, fid):
-    st.write(t("switch_text"))
-    add, replace, cancel = st.columns(3)
-    if add.button(t("switch_add"), icon=":material/add:", width="stretch"):
-        st.session_state.ctx_building = b
-        if fid is not None:
-            st.session_state.sel_faces.append(fid)
-        st.rerun()
-    if replace.button(t("switch_replace"), icon=":material/swap_horiz:", type="primary", width="stretch"):
-        reset_roof()
-        st.session_state.ctx_building = b
-        st.session_state.sel_faces = [] if fid is None else [fid]
-        st.rerun()
-    if cancel.button(t("switch_cancel"), width="stretch"):
-        st.rerun()
-
-
 def reset_roof():
     """Nouveau toit : on efface les choix du précédent (pans, obstacles, positions, pans dessinés)."""
     st.session_state.sel_faces = []
@@ -290,32 +290,22 @@ def reset_roof():
     st.session_state.custom_faces.clear()
     st.session_state.epoch += 1
     st.session_state.show_panels = False
+    st.session_state.cells_loaded = set()
 
 
-# Le lieu sélectionné vient de l'adresse tapée ou d'un clic sur un toit de la carte
-query = st.text_input(t("address"), placeholder=t("address_ph"), key="address").strip()
-if query:
-    try:
-        results = search(query)
-    except ApiError as e:
-        fail(e)
-    if not results:
-        st.warning(t("address_none"))
-    else:
-        addr = results[0] if len(results) == 1 else st.selectbox(t("address_found"), results,
-                                                                  format_func=lambda r: r["label"])
-        if st.session_state.get("addr_sig") != (query, addr["label"]):  # nouvelle adresse : on s'y place
-            st.session_state.addr_sig = (query, addr["label"])
-            st.session_state.loc = {"lat": addr["lat"], "lon": addr["lon"]}
-            reset_roof()
-            st.session_state.ctx_building = None
+# Le lieu sélectionné vient de l'adresse choisie dans les suggestions ou d'un clic sur un toit de la carte
+addr = address_box(t("address_ph"), t("address_none"), key="address")
+if addr and st.session_state.get("addr_sig") != (addr["label"], addr["t"]):  # nouvelle adresse : on s'y place
+    st.session_state.addr_sig = (addr["label"], addr["t"])
+    st.session_state.loc = {"lat": addr["lat"], "lon": addr["lon"]}
+    reset_roof()
 
 loc = st.session_state.get("loc")
 if not loc:
     st.info(t("address_start"), icon=":material/home_pin:")
     out = st_folium(base_map(SWISS_CENTER, SWISS_ZOOM), height=MAP_HEIGHT, use_container_width=True,
                     returned_objects=["last_clicked"], key="swissmap")
-    if handle_click(out, "pick"):
+    if handle_click(out, "faces"):
         st.rerun()
     st.stop()
 
@@ -323,11 +313,11 @@ tr = t_fixed()
 # Outil de la carte et panneau de dessin : au-dessus de la carte, créés ici pour connaître l'outil tout de suite
 tool_slot, draw_slot, map_c = st.container(), st.container(), st.container()
 with tool_slot:
-    tool = st.segmented_control(t("tool"), ["house", "faces", "draw", "add", "del"],
-                                format_func=lambda k: tr(f"tool_{k}"), default="house", key="tool_sel",
-                                help=t("tool_help") + " " + t("draw_help")) or "house"
-if tool not in ("house", "faces", "draw", "add", "del"):  # valeur d'une ancienne session
-    tool = "house"
+    tool = st.segmented_control(t("tool"), ["faces", "draw", "add", "del"],
+                                format_func=lambda k: tr(f"tool_{k}"), default="faces", key="tool_sel",
+                                help=t("tool_help") + " " + t("draw_help")) or "faces"
+if tool not in ("faces", "draw", "add", "del"):  # valeur d'une ancienne session
+    tool = "faces"
 with draw_slot:
     if tool == "draw":
         st.info(t("draw_steps"), icon=":material/draw:")
@@ -364,17 +354,12 @@ store.update({f["id"]: f for f in custom})
 faces = list(store.values())
 buildings = geo.buildings_by_distance(near, loc["lat"], loc["lon"])
 
-# Maison affichée : celle des pans choisis, sinon celle sur laquelle on a cliqué, sinon celle sous l'adresse
-present = {f["building_id"] for f in faces}
+# Bâtiments concernés : ceux des pans choisis (peu importe lesquels) et celui sous l'adresse
 sel_ids = [i for i in st.session_state.sel_faces if i in store]
 st.session_state.sel_faces = sel_ids
-ctx = st.session_state.ctx_building if st.session_state.ctx_building in present else (buildings[0] if buildings else None)
+ctx = buildings[0] if buildings else None  # sert à cadrer la carte au départ
 shown = list(dict.fromkeys([store[i]["building_id"] for i in sel_ids] + ([ctx] if ctx is not None else [])))
 sel_key = "-".join(map(str, sel_ids))
-
-pending = st.session_state.pop("pending", None)
-if pending and pending["b"] not in shown:
-    confirm_switch(pending["b"], pending["fid"])  # fermer la fenêtre = annuler
 
 bfaces = []  # pans choisis puis pans dessinés ; « Pan 2 » ou « Pan 1.2 » s'il y a plusieurs bâtiments
 all_labels = {}
@@ -427,7 +412,7 @@ STEP_KEY = f"steps-{lang()}"
 
 def goto(step, tool=None, show=False):
     """Bouton « Suivant » : ouvre l'étape, change l'outil de la carte, et pose les panneaux si show."""
-    st.session_state[STEP_KEY] = t(f"step_{step}")
+    st.session_state[STEP_KEY] = t(f"step_{step - 1}")  # les appels gardent l'ancienne numérotation (2 = pans)
     if tool:
         st.session_state.tool_sel = tool
     if show:
@@ -440,25 +425,16 @@ def next_button(step, tool=None, show=False, disabled=False):
 
 
 def preselect_best():
-    """Coche les pans d'aptitude bonne ou mieux de la maison affichée, sinon ses meilleurs."""
-    for b in shown:
-        fs = [f for f in faces if f["building_id"] == b and f["id"] not in st.session_state.sel_faces]
-        best = min(3, max((f["klasse"] for f in fs), default=0))
-        st.session_state.sel_faces += [f["id"] for f in fs if f["klasse"] >= best > 0]
+    """Coche les pans d'aptitude bonne ou mieux du bâtiment sous l'adresse, sinon ses meilleurs."""
+    fs = [f for f in faces if f["building_id"] == ctx and f["id"] not in st.session_state.sel_faces]
+    best = min(3, max((f["klasse"] for f in fs), default=0))
+    st.session_state.sel_faces += [f["id"] for f in fs if f["klasse"] >= best > 0]
 
 
 # Page : carte, puis les étapes en onglets. Les onglets sont tous exécutés, donc les réglages d'une étape
 # restent quand on en regarde une autre ; « Suivant » ouvre l'onglet suivant.
 map_slot = map_c
-tab1, tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 6)], key=STEP_KEY, on_change=lambda: None)
-
-with tab1:
-    st.caption(t("step1_note"))
-    house = [f for f in faces if f["building_id"] == ctx]
-    if house:
-        st.success(t("house_picked", n=len(house), area=f"{sum(f['area'] for f in house):.0f}"),
-                   icon=":material/home:")
-    next_button(2, "faces")
+tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 5)], key=STEP_KEY, on_change=lambda: None)
 
 with tab3:
     h1, h2, h3, h4, h5 = st.columns(5)
@@ -500,7 +476,10 @@ def place(f, n=None):
 arrays = []  # un dict par pan équipé : tilt, azimuth, kwp, panels, face_id, layout, label, quality
 with tab2:
     st.caption(f"{t('step2_note')} {t('faces_picked', n=len(bfaces))}")
-    st.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best)
+    b1, b2, _ = st.columns([2, 2, 3])
+    b1.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best, width="stretch")
+    b2.button(t("clear_sel"), icon=":material/deselect:", disabled=not bfaces, width="stretch",
+              on_click=lambda: st.session_state.sel_faces.clear())
     inc, wid, lng, tilt, ori, hb, ht = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
                                                        "col_orient_deg", "col_hb", "col_ht"))
     dims0, heights0, rows, index = {}, {}, [], []
@@ -616,18 +595,27 @@ with map_slot:
     fmap = base_map(view["center"] if view else center, view["zoom"] if view else 20, draw=tool == "draw",
                     bounds=None if view else bounds)
     dyn = folium.FeatureGroup(name="dyn", control=False)
-    for f in faces:
+    vb = st.session_state.get("live_bounds")
+    vb = vb if valid_bounds(vb) else None  # on ne dessine que les pans dans la vue (et ceux choisis)
+
+    def visible(f, m=0.0005):
+        if not vb or f.get("custom") or f["id"] in equipped:
+            return True
+        xs, ys = [p[0] for p in f["ring"]], [p[1] for p in f["ring"]]
+        (s_, w_), (n_, e_) = (vb["_southWest"]["lat"], vb["_southWest"]["lng"]), (vb["_northEast"]["lat"],
+                                                                                  vb["_northEast"]["lng"])
+        return not (max(ys) < s_ - m or min(ys) > n_ + m or max(xs) < w_ - m or min(xs) > e_ + m)
+
+    for f in filter(visible, faces):
         is_custom = f.get("custom", False)
-        mine = is_custom or f["building_id"] in shown
         fill = PANEL if f["id"] in equipped else CUSTOM if is_custom else CLASS_COLORS[f["klasse"]]
         tip = (f"{f['name']} · {f['area']:.0f} m² · {f['tilt']:.0f}°" if is_custom else
                f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}")
         folium.Polygon(
             [(y, x) for x, y in f["ring"]],
-            color=CUSTOM if is_custom else "#ffffff" if f["building_id"] != ctx else "#ffe27a",
-            weight=(2.4 if f["building_id"] == ctx else 1.4) if mine else 0.5, fill=True, fill_color=fill,
-            fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.15, tooltip=tip,
-            interactive=tool != "draw",
+            color=CUSTOM if is_custom else "#9cc3f5" if f["id"] in equipped else "#ffffff",
+            weight=2 if f["id"] in equipped else 1.1, fill=True, fill_color=fill,
+            fill_opacity=0.3 if f["id"] in equipped else 0.55, tooltip=tip, interactive=tool != "draw",
         ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
         for rect in a["layout"]:
@@ -638,12 +626,20 @@ with map_slot:
                        weight=1, fill=True, fill_color=OBSTACLE, fill_opacity=0.9,
                        tooltip=f"{tr(ob['kind'])} · {ob['w']:.2f} × {ob['l']:.2f} m", interactive=False).add_to(dyn)
     out = st_folium(fmap, feature_group_to_add=dyn, height=MAP_HEIGHT, use_container_width=True,
-                    returned_objects=["last_clicked", "all_drawings", "center", "zoom"],
+                    returned_objects=["last_clicked", "all_drawings", "center", "zoom", "bounds"],
                     key=f"roofmap-{st.session_state.epoch}-{lang()}-{tool == 'draw'}")
     if out and out.get("center") and out.get("zoom"):  # vue actuelle, pour recréer la carte au même endroit
         st.session_state.live_view = {"center": [out["center"]["lat"], out["center"]["lng"]], "zoom": out["zoom"]}
     st.caption(t("map_note"))
-    if handle_drawings(out) or handle_click(out, tool):
+    changed = handle_drawings(out) or handle_click(out, tool)
+    if out and valid_bounds(out.get("bounds")):  # les toits se chargent autour de la vue, sans cliquer
+        st.session_state.live_bounds = out["bounds"]
+        if (out.get("zoom") or 0) >= 17:
+            with st.spinner(t("loading_roofs")):
+                changed = load_cells(out["bounds"]) > 0 or changed
+        else:
+            st.caption(t("zoom_more"))
+    if changed:
         st.rerun()
 
 # ---- Étape 5 : production ---------------------------------------------------------------------

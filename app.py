@@ -15,6 +15,7 @@ st.markdown(
     """
 <style>
 .block-container { max-width: 1380px; }
+[data-stale="true"] { opacity: 1 !important; transition: none !important; }  /* pas de voile gris pendant un recalcul */
 h1 { font-weight: 650; letter-spacing: -0.02em; font-size: 2.1rem !important; }
 h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .lead { color: #9a9ea8; font-size: 1.02rem; line-height: 1.6; max-width: 760px; margin: -0.4rem 0 1.6rem; }

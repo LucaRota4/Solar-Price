@@ -17,9 +17,12 @@ Les règles métier marquées « à vérifier » doivent être confirmées avant
 Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateur) :
 
 - Page en 5 étapes (onglets) : toit, pans, panneaux, obstacles et position, production ; hypothèses sous la carte
-- Parcours guidé : choisir la maison (aucun panneau), cliquer les pans sur la carte (ou dessiner un pan), puis
-  « Suivant » pose les panneaux ; chaque étape a son bouton « Suivant » qui ouvre l'onglet suivant
-- Plusieurs bâtiments possibles ; au clic sur un autre bâtiment, fenêtre « ajouter / remplacer / annuler »
+- Parcours en 4 étapes (onglets) : pans, panneaux, obstacles et position, production ; chaque étape a son « Suivant »
+  qui ouvre l'onglet suivant, et les panneaux ne sont posés qu'après le « Suivant » de l'étape 1
+- Un clic sur un pan le choisit (second clic : le retire), de n'importe quel bâtiment, sans étape « choisir la
+  maison » ni fenêtre de confirmation ; boutons « Pré-sélectionner les meilleurs pans » et « Tout désélectionner »
+- Recherche d'adresse avec suggestions pendant la frappe (petit composant sans dépendance, search_box.py)
+- Les toits se chargent autour de la vue en naviguant sur la carte (cases de 100 m, dès le zoom 17)
 - Un seul tableau de pans (valeurs du cadastre modifiables : largeur, longueur, inclinaison, orientation, hauteur) ;
   les modes simple/détaillé sont supprimés
 - Obstacles (fenêtre de toit, cheminée, autre) posés au clic, les panneaux les évitent (10 cm de dégagement)
@@ -67,8 +70,7 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
      désaccord quand des pans d'orientations différentes partagent une entrée.
    - Taille de l'onduleur (ratio DC/AC) : écrêtage calculé avec les données horaires.
    - Durée de vie 10-15 ans : un remplacement sur 25 ans, à compter dans l'économie.
-5. **Chargement des toits en se baladant** : charger les toits autour de la vue courante quand on est
-   assez zoomé, sans clic (aujourd'hui : chargés autour de l'adresse ou du toit cliqué).
+5. (fait) Chargement des toits en se baladant.
 
 ## Valeur de la production (étapes 2 à 4 du CLAUDE.md)
 
