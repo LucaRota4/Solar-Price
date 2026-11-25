@@ -364,13 +364,61 @@ def resize_side(f, i, length):
         pts[p][1] += uy * (h_new - h) / geo.M_PER_DEG_LAT
 
 
+def resize_face(f, ks, kd):
+    """Étire le pan dessiné f de ks le long du faîte et de kd dans la pente, autour de son centre. Les hauteurs
+    restent fixes (l'inclinaison peut donc changer). Les points partagés entraînent les pans voisins."""
+    pts, ids = st.session_state.points, f["pids"]
+    cx, cy = sum(pts[p][0] for p in ids) / len(ids), sum(pts[p][1] for p in ids) / len(ids)
+    k = math.cos(math.radians(cy)) * geo.M_PER_DEG_LAT
+    a = math.radians(f["azimuth"])
+    u, v = (math.cos(a), -math.sin(a)), (-math.sin(a), -math.cos(a))  # le long du faîte, dans la pente
+    for p in ids:
+        dx, dy = (pts[p][0] - cx) * k, (pts[p][1] - cy) * geo.M_PER_DEG_LAT
+        s, d = (dx * u[0] + dy * u[1]) * ks, (dx * v[0] + dy * v[1]) * kd
+        pts[p][0] = cx + (s * u[0] + d * v[0]) / k
+        pts[p][1] = cy + (s * u[1] + d * v[1]) / geo.M_PER_DEG_LAT
+
+
+def slide_face(f, dlon, dlat):
+    """Fait glisser tout le pan dessiné f de (dlon, dlat) : les hauteurs de ses points ne changent pas. Ses points
+    partagés avec un autre pan sont détachés (l'autre pan ne bouge pas) ; à la dépose, un coin proche d'un coin
+    d'un autre pan fusionne avec lui."""
+    pts, ids = st.session_state.points, f["pids"]
+    others = {p for g in custom if g is not f for p in g["pids"]}
+    for i, p in enumerate(ids):
+        if p in others:
+            ids[i] = new_point(pts[p][0], pts[p][1], pts[p][2])
+    for p in ids:
+        pts[p][0] += dlon
+        pts[p][1] += dlat
+    for i, p in enumerate(list(ids)):
+        target = nearest_point(pts[p][0], pts[p][1], exclude=set(ids))
+        if target is not None:
+            ids[i] = target
+            del pts[p]
+
+
+def clear_all():
+    """Efface tout : pans choisis, pans dessinés (sans rétablir les pans qu'ils remplaçaient), obstacles, positions."""
+    st.session_state.sel_faces.clear()
+    for f in custom:
+        store.pop(f["id"], None)
+    custom.clear()
+    st.session_state.points = {}
+    st.session_state.obstacles.clear()
+    st.session_state.shifts.clear()
+    st.session_state.show_panels = False
+    st.session_state.epoch += 1
+    st.session_state.z_ver += 1
+
+
 def handle_drag(out) -> bool:
     """Coin d'un pan dessiné ou obstacle déplacé à la main (poignée lâchée ailleurs). True si on a bougé quelque
     chose. Un coin lâché près d'un coin d'un autre pan fusionne avec lui (aimantation) : un seul point, une seule
     hauteur."""
     tip = (out or {}).get("last_object_clicked_tooltip") or ""
     pos = (out or {}).get("last_object_clicked")
-    m = re.search(r"@([coh]):(\d+):(-?[\d.]+)\s*@drag", tip)
+    m = re.search(r"@([cohf]):(\d+):(-?[\d.]+)\s*@drag", tip)
     if not m or not pos:
         return False
     key = (st.session_state.get("map_state"), out.get("last_object_clicked_count"), round(pos["lat"], 7),
@@ -387,6 +435,17 @@ def handle_drag(out) -> bool:
         st.session_state.z_ver += 1
         sync_custom()
         return True
+    if kind == "f":  # pan dessiné a : glissé d'un bloc, hauteurs inchangées
+        face = next((f for f in custom if f["id"] == a), None)
+        if face is None:
+            return False
+        pts = st.session_state.points
+        cx = sum(pts[p][0] for p in face["pids"]) / len(face["pids"])
+        cy = sum(pts[p][1] for p in face["pids"]) / len(face["pids"])
+        slide_face(face, lon - cx, lat - cy)
+        st.session_state.z_ver += 1
+        sync_custom()
+        return True
     if kind == "c":  # point a
         pts = st.session_state.points
         if a not in pts:
@@ -398,10 +457,16 @@ def handle_drag(out) -> bool:
                 f["pids"] = [target if p == a else p for p in f["pids"]]
             del pts[a]
         else:
+            # Hauteur : le point reste dans le plan formé par les autres points de son pan (de chaque pan, s'il
+            # est partagé : moyenne) ; un triangle n'a que deux autres points, on garde alors son plan d'avant
+            zs = []
+            for f in mine:
+                rest = [p for p in f["pids"] if p != a]
+                src = rest if len(rest) >= 3 else f["pids"]
+                zs.append(geo.fit_plane_z([[pts[p][0], pts[p][1]] for p in src], [pts[p][2] for p in src], lon, lat))
             pts[a][0], pts[a][1] = lon, lat
-            zn = neighbor_z(lon, lat, exclude={f["id"] for f in mine}, drawn_only=True)
-            if zn is not None:  # le coin est maintenant sur un autre pan dessiné : il prend sa hauteur
-                pts[a][2] = round(zn, 2)
+            if zs:
+                pts[a][2] = round(sum(zs) / len(zs), 2)
         st.session_state.z_ver += 1
         sync_custom()
         return True
@@ -482,7 +547,12 @@ def delete_drawn(fid=None):
     for f in custom:  # les pans du cadastre qu'il remplaçait redeviennent choisis
         if fid is None or f["id"] == fid:
             sel += [i for i in f.get("replaced", []) if i not in sel and i in store]
-    custom[:] = [f for f in custom if fid is not None and f["id"] != fid]
+    gone = {f["id"] for f in custom if fid is None or f["id"] == fid}
+    custom[:] = [f for f in custom if f["id"] not in gone]
+    st.session_state.obstacles[:] = [o for o in st.session_state.obstacles if o["face_id"] not in gone]
+    for i in gone:
+        store.pop(i, None)
+        st.session_state.shifts.pop(i, None)
     used = {p for f in custom for p in f["pids"]}  # les points qui ne servent plus disparaissent
     st.session_state.points = {k: v for k, v in st.session_state.points.items() if k in used}
     st.session_state.epoch += 1
@@ -555,6 +625,15 @@ with draw_slot:
                       on_click=delete_drawn, args=(f["id"],), width="stretch")
             with st.expander(f"{t('sides_title')} · {f['name']}"):
                 st.caption(t("sides_help"))
+                w0, l0 = geo.face_dimensions(f)  # largeur le long du faîte, longueur dans la pente
+                sig = f"{w0:.2f}-{l0:.2f}"  # la clé suit la géométrie : après un déplacement, la saisie repart de la valeur réelle
+                dc1, dc2 = st.columns(2)
+                w_new = dc1.number_input(t("col_width"), 0.3, 300.0, round(w0, 1), 0.1, key=f"fw-{f['id']}-{lang()}-{sig}")
+                l_new = dc2.number_input(t("col_length"), 0.3, 300.0, round(l0, 1), 0.1, key=f"fl-{f['id']}-{lang()}-{sig}")
+                if abs(w_new - round(w0, 1)) > 0.04 or abs(l_new - round(l0, 1)) > 0.04:
+                    resize_face(f, w_new / w0, l_new / l0)
+                    sync_custom()
+                    st.session_state.z_ver += 1
                 ids = f["pids"]
                 lens = [side_length(ids[i], ids[(i + 1) % len(ids)]) for i in range(len(ids))]
                 col = t("side_len")
@@ -707,8 +786,8 @@ with tab2:
     st.caption(f"{t('step2_note')} {t('faces_picked', n=len(bfaces))}")
     b1, b2, _ = st.columns([2, 2, 3])
     b1.button(t("best_faces"), icon=":material/auto_awesome:", on_click=preselect_best, width="stretch")
-    b2.button(t("clear_sel"), icon=":material/deselect:", disabled=not bfaces, width="stretch",
-              on_click=lambda: st.session_state.sel_faces.clear())
+    b2.button(t("clear_sel"), icon=":material/delete_sweep:", disabled=not (bfaces or st.session_state.obstacles),
+              width="stretch", help=t("clear_sel_help"), on_click=clear_all)
     inc, wid, lng, tilt, ori, hb, ht = (t(c) for c in ("col_include", "col_width", "col_length", "col_tilt_deg",
                                                        "col_orient_deg", "col_hb", "col_ht"))
     dims0, heights0, rows, index = {}, {}, [], []
@@ -762,7 +841,7 @@ with tab2:
             by_heights.append(f"{f['label']} {tilt_eff:.0f}°")
         fe = {**f, "tilt": tilt_eff, "azimuth": r[ori]}  # la grille suit l'inclinaison et l'orientation
         w0, l0 = dims0[f["id"]]
-        edited_dims = abs(r[wid] - w0) > 0.05 or abs(r[lng] - l0) > 0.05
+        edited_dims = (abs(r[wid] - w0) > 0.05 or abs(r[lng] - l0) > 0.05) and not f.get("custom")
         # Dimensions inchangées : disposition réelle dans le contour ; modifiées : on recalcule le nombre
         layout, n = place(fe, fit_panels(r[wid], r[lng], panel_w, panel_l, margin) if edited_dims else None)
         arrays.append({"tilt": tilt_eff, "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
@@ -862,6 +941,16 @@ with map_slot:
                 'style="width:62px;height:20px;box-sizing:border-box;padding:0 3px;border-radius:4px;'
                 'border:1px solid #fff;background:rgba(20,23,28,.9);color:#f0efec;font:600 11px Inter,sans-serif">'
                 '</div>')),
+        ).add_to(dyn)
+    for f in custom:  # poignée au centre de chaque pan dessiné : on le glisse d'un bloc, hauteurs inchangées
+        pp = [st.session_state.points[p] for p in f["pids"]]
+        folium.Marker(
+            [sum(q[1] for q in pp) / len(pp), sum(q[0] for q in pp) / len(pp)], draggable=True,
+            tooltip=(f"{f['name']} ({t('slide_hint')})" f'<span style="display:none">@f:{f["id"]}:0</span>'),
+            icon=folium.DivIcon(icon_size=(26, 26), icon_anchor=(13, 13), html=(
+                f'<div style="width:26px;height:26px;border-radius:50%;background:{CUSTOM};color:#14171c;'
+                'font:700 16px/24px Inter,sans-serif;text-align:center;border:2px solid #fff;cursor:grab;'
+                'box-shadow:0 0 4px rgba(0,0,0,.7)">✥</div>')),
         ).add_to(dyn)
     for f in custom:  # longueur réelle de chaque côté, au milieu du côté
         for i, p in enumerate(f["pids"]):

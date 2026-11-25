@@ -39,6 +39,10 @@ Retouches du 2026-11-25 (testées en headless, pas encore vues dans le navigateu
 - Hauteur de chaque point éditable directement sur la carte (champ à côté du point) et longueur réelle de chaque
   côté affichée sur la carte ; tableau « Côtés » par pan : corriger une longueur étire le pan dans cette direction
   (hauteurs fixes, un rectangle reste un rectangle)
+- Pans dessinés : un point déplacé reste dans le plan des autres points de son pan (sa hauteur suit) ; poignée ✥ au
+  centre pour glisser tout le pan, hauteurs inchangées (ses coins partagés sont détachés, et fusionnent à la dépose
+  près d'un coin voisin) ; largeur et longueur du pan modifiables (le pan s'étire autour de son centre)
+- « Tout effacer » efface aussi les pans dessinés, les obstacles et les positions de panneaux
 - Coins partagés : un coin posé ou lâché à moins de 60 cm d'un coin d'un autre pan fusionne avec lui (un seul point,
   une seule hauteur) ; hauteurs de départ recalées sur les toits voisins (pans dessinés, puis pan du cadastre sous
   le tracé), avec la pente du pan remplacé conservée
