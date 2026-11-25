@@ -650,6 +650,9 @@ TEXT = {
         "Ogni falda scelta è riempita di pannelli entro il suo contorno reale nel catasto solare (margine regolabile, 10 cm di distanza attorno agli ostacoli) oppure completata a mano. Larghezza, lunghezza, inclinazione, orientamento e altezze di una falda si possono correggere e le falde rilevate male si possono ridisegnare. La produzione proviene da PVGIS (media 2005-2023, perdite di sistema regolabili, 14 % per impostazione predefinita), calcolata per 1 kWp per falda e moltiplicata per la potenza installata. Limiti: nessun ombreggiamento (alberi, edifici vicini), ostacoli del tetto non rilevati automaticamente, ancora nessun prezzo dell'elettricità. Stima indicativa, non sostituisce lo studio di un installatore.",
         "Each picked face is filled with panels inside its real outline from the solar cadastre (adjustable edge margin, 10 cm clearance around obstacles), or laid out by hand. A face's width, length, tilt, orientation and heights can be corrected, and badly detected faces redrawn. Production comes from PVGIS (2005-2023 average, adjustable system losses, 14 % by default), computed for 1 kWp per face then multiplied by the installed power. Limits: no shading (trees, neighbouring buildings), roof obstacles are not detected automatically, no electricity prices yet. Indicative estimate; it does not replace an installer's study.",
     ),
+}
+
+MONTHS = {
     "fr": ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"],
     "de": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
     "it": ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"],
