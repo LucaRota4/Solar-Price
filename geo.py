@@ -39,7 +39,7 @@ def _outer_ring(geom: dict) -> list[list[float]]:
     return coords[0][0] if geom["type"] == "MultiPolygon" else coords[0]
 
 
-def roofs_around(lat: float, lon: float, radius_m: float = 30) -> list[dict]:
+def roofs_around(lat: float, lon: float, radius_m: float = 50) -> list[dict]:
     """Tous les pans de toit dans un carré de ±radius_m autour du point."""
     dlat = radius_m / M_PER_DEG_LAT
     dlon = radius_m / (M_PER_DEG_LAT * math.cos(math.radians(lat)))
@@ -83,7 +83,7 @@ def roofs_around(lat: float, lon: float, radius_m: float = 30) -> list[dict]:
     return faces
 
 
-def _contains(ring, lon, lat) -> bool:
+def contains(ring, lon, lat) -> bool:
     inside = False
     for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
         if (y1 > lat) != (y2 > lat) and lon < x1 + (lat - y1) * (x2 - x1) / (y2 - y1):
@@ -100,7 +100,7 @@ def buildings_by_distance(faces: list[dict], lat: float, lon: float) -> list[int
     k = math.cos(math.radians(lat))
     dist = {}
     for f in faces:
-        if _contains(f["ring"], lon, lat):
+        if contains(f["ring"], lon, lat):
             d = 0.0
         else:
             cx, cy = _centroid(f["ring"])

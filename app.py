@@ -14,20 +14,18 @@ if "lang" not in st.session_state:
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, .stApp, [class*="st-"] { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
-.block-container { padding-top: 4.2rem; max-width: 1200px; }
+.block-container { max-width: 1380px; }
 h1 { font-weight: 650; letter-spacing: -0.02em; font-size: 2.1rem !important; }
 h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
-.lead { color: #5b5e66; font-size: 1.02rem; line-height: 1.6; max-width: 760px; margin: -0.4rem 0 1.6rem; }
-.eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #1f4e8c; }
-[data-testid="stMetric"] { border: 1px solid #e4e3dd; border-radius: 8px; padding: 14px 16px; background: #fff; }
-[data-testid="stMetricLabel"] p { font-size: 0.78rem; color: #6b6e76; text-transform: uppercase; letter-spacing: 0.06em; }
+.lead { color: #9a9ea8; font-size: 1.02rem; line-height: 1.6; max-width: 760px; margin: -0.4rem 0 1.6rem; }
+.eyebrow { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #6da7ec; }
+[data-testid="stMetric"] { border: 1px solid #2a2e36; border-radius: 8px; padding: 14px 16px; background: #14171c; }
+[data-testid="stMetricLabel"] p { font-size: 0.78rem; color: #8a8f99; text-transform: uppercase; letter-spacing: 0.06em; }
 [data-testid="stMetricValue"] { font-weight: 600; letter-spacing: -0.02em; }
 .credits { display: flex; gap: 8px 20px; align-items: center; flex-wrap: wrap; margin-top: 3rem; padding-top: 1.1rem;
-    border-top: 1px solid #e4e3dd; font-size: 0.82rem; color: #8a8d94; }
-.credits a { display: inline-flex; align-items: center; gap: 7px; color: #5b5e66 !important; text-decoration: none; }
-.credits a:hover { color: #1f4e8c !important; }
+    border-top: 1px solid #2a2e36; font-size: 0.82rem; color: #7d818b; }
+.credits a { display: inline-flex; align-items: center; gap: 7px; color: #b4b8c1 !important; text-decoration: none; }
+.credits a:hover { color: #6da7ec !important; }
 </style>
 """,
     unsafe_allow_html=True,

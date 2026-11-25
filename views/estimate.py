@@ -5,6 +5,8 @@ import folium
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from branca.element import MacroElement
+from jinja2 import Template
 from streamlit_folium import st_folium
 
 import geo
@@ -12,14 +14,54 @@ import pv
 from http_cache import ApiError
 from i18n import kwh, klass, lang, months, orientation, t, t_fixed
 
-# Palette des graphiques (light) : encre, grille, séries
-INK, INK2, MUTED, GRID, AXIS = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
-BLUE, ORANGE = "#2a78d6", "#eb6834"
-BAND = "rgba(42,120,214,0.16)"
+# Palette des graphiques (mode sombre) : encre, grille, séries
+INK, INK2, MUTED, GRID, AXIS = "#f0efec", "#c3c2b7", "#898781", "#2c2c2a", "#383835"
+BLUE, ORANGE = "#3987e5", "#d95926"
+BAND = "rgba(57,135,229,0.22)"
 # Carte : pans équipés en bleu, aptitude en rampe chaude (faible -> excellente)
-PANEL = "#2a78d6"
+PANEL = "#3987e5"
 CLASS_COLORS = {1: "#d9d6cc", 2: "#e9cf8e", 3: "#e0a35a", 4: "#c96f3b", 5: "#9c4424"}
 SWISSIMAGE = "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg"
+OSM_PLAN = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"  # plan avec rues et numéros de maison
+MAP_HEIGHT = 580
+SWISS_CENTER, SWISS_ZOOM = (46.82, 8.23), 8
+
+
+class Compass(MacroElement):
+    """Boussole (nord en haut) dans le coin supérieur droit de la carte."""
+
+    _template = Template("""
+{% macro script(this, kwargs) %}
+var compass = L.control({position: 'topright'});
+compass.onAdd = function () {
+  var d = L.DomUtil.create('div');
+  // Pas de fond : une ombre portée suffit à rester lisible sur la vue aérienne comme sur le plan
+  d.style.cssText = 'filter:drop-shadow(0 1px 2px rgba(0,0,0,.85)) drop-shadow(0 0 4px rgba(0,0,0,.5));'
+    + 'pointer-events:none;';
+  d.innerHTML = '<svg width="58" height="72" viewBox="0 0 34 42" aria-label="N">'
+    + '<text x="17" y="10" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff" '
+    + 'font-family="Inter, sans-serif">N</text>'
+    + '<polygon points="17,13 23,27 17,24.5 11,27" fill="#e4572e" stroke="#ffffff" stroke-width=".6"/>'
+    + '<polygon points="17,41 23,27 17,29.5 11,27" fill="#f0efec" stroke="#ffffff" stroke-width=".6"/></svg>';
+  return d;
+};
+compass.addTo({{ this._parent.get_name() }});
+{% endmacro %}
+""")
+
+
+def base_map(center, zoom):
+    """Carte limitée à la Suisse : vue aérienne swisstopo (par défaut) ou plan avec rues et numéros,
+    au choix dans la carte. Boussole, sans échelle."""
+    fmap = folium.Map(location=center, zoom_start=zoom, min_zoom=7, max_zoom=21, tiles=None, control_scale=False,
+                      max_bounds=True, min_lat=45.4, max_lat=48.2, min_lon=5.4, max_lon=11.0)
+    folium.TileLayer(SWISSIMAGE, attr="© swisstopo", name=t("map_satellite"), max_native_zoom=20,
+                     max_zoom=21).add_to(fmap)
+    folium.TileLayer(OSM_PLAN, attr="© OpenStreetMap", name=t("map_plan"), max_native_zoom=19,
+                     max_zoom=21, show=False).add_to(fmap)
+    folium.LayerControl(position="topleft", collapsed=False).add_to(fmap)
+    Compass().add_to(fmap)
+    return fmap
 
 
 @st.cache_data(show_spinner=False)
@@ -50,14 +92,14 @@ def fail(e: ApiError):
 def style(fig, title, ytitle, height=320):
     fig.update_layout(
         title=dict(text=title, font=dict(size=15, color=INK)),
-        template="plotly_white",
+        template="plotly_dark",
         height=height,
         margin=dict(l=8, r=8, t=44, b=8),
         font=dict(family="Inter, system-ui, -apple-system, Segoe UI, sans-serif", color=INK2, size=13),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", x=0, y=1.12, font=dict(color=INK2)),
-        hoverlabel=dict(bgcolor="white", font_color=INK),
+        hoverlabel=dict(bgcolor="#1a1a19", font_color=INK, bordercolor="#383835"),
         bargap=0.3,
         barcornerradius=4,
     )
@@ -83,6 +125,7 @@ st.markdown(f'<p class="lead">{t("est_intro")}</p>', unsafe_allow_html=True)
 query = st.text_input(t("address"), placeholder=t("address_ph"), key="address")
 if not query.strip():
     st.info(t("address_start"), icon=":material/home_pin:")
+    st_folium(base_map(SWISS_CENTER, SWISS_ZOOM), height=MAP_HEIGHT, use_container_width=True, returned_objects=[])
     st.stop()
 
 try:
@@ -96,22 +139,21 @@ addr = results[0] if len(results) == 1 else st.selectbox(t("address_found"), res
 lat, lon = addr["lat"], addr["lon"]
 
 try:
-    faces = roofs(lat, lon)
+    faces = roofs(lat, lon)  # tous les toits dans le périmètre autour de l'adresse
 except ApiError as e:
     fail(e)
 buildings = geo.buildings_by_distance(faces, lat, lon)
 
 tr = t_fixed()
-c1, c2, c3 = st.columns([2, 2, 3], vertical_alignment="bottom")
+c1, c2, _ = st.columns([2, 2, 3], vertical_alignment="bottom")
 mode = c1.segmented_control(t("mode"), ["simple", "detailed"], format_func=tr, default="simple", key="mode") or "simple"
 analysis = c2.segmented_control(t("analysis"), ["basic", "advanced"], format_func=tr, default="basic",
                                 key="analysis_mode") or "basic"
-building = buildings[0] if buildings else None
-if len(buildings) > 1:
-    building = c3.selectbox(
-        t("building"), buildings, help=t("building_help"), key=f"building-{lang()}",
-        format_func=lambda b: tr("building_here") if b == buildings[0] else tr("building_near", id=b),
-    )
+# Bâtiment actif : celui à l'adresse, puis celui sur lequel on clique dans la carte
+bkey = f"building@{lat:.6f},{lon:.6f}"
+if bkey not in st.session_state:
+    st.session_state[bkey] = buildings[0] if buildings else None
+building = st.session_state[bkey]
 
 bfaces = [f for f in faces if f["building_id"] == building]
 if not bfaces:
@@ -184,15 +226,14 @@ else:
 # ---- Carte : vue aérienne swisstopo, affichée au-dessus des tableaux --------------------------
 with map_slot:
     equipped = {a["face_id"] for a in arrays if a["kwp"] > 0}
-    fmap = folium.Map(location=[lat, lon], zoom_start=20, max_zoom=21, tiles=None, control_scale=True)
-    folium.TileLayer(SWISSIMAGE, attr="© swisstopo", max_native_zoom=20, max_zoom=21).add_to(fmap)
+    fmap = base_map([lat, lon], 20)
     for f in faces:
         mine = f["building_id"] == building
         fill = PANEL if f["id"] in equipped else CLASS_COLORS[f["klasse"]]
         folium.Polygon(
             [(y, x) for x, y in f["ring"]],
-            color="#ffffff", weight=1.2 if mine else 0.6, fill=True, fill_color=fill,
-            fill_opacity=(0.8 if f["id"] in equipped else 0.55) if mine else 0.0,
+            color="#ffffff", weight=1.4 if mine else 0.6, fill=True, fill_color=fill,
+            fill_opacity=(0.85 if f["id"] in equipped else 0.6) if mine else 0.28,
             tooltip=f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}",
         ).add_to(fmap)
     folium.CircleMarker([lat, lon], radius=6, color="#ffffff", weight=2, fill=True, fill_color="#e4572e",
@@ -201,8 +242,15 @@ with map_slot:
         pts = [(y, x) for f in bfaces for x, y in f["ring"]]
         fmap.fit_bounds([[min(p[0] for p in pts), min(p[1] for p in pts)],
                          [max(p[0] for p in pts), max(p[1] for p in pts)]], padding=(30, 30))
-    st_folium(fmap, height=420, use_container_width=True, returned_objects=[])
+    out = st_folium(fmap, height=MAP_HEIGHT, use_container_width=True, returned_objects=["last_clicked"],
+                    key=f"map-{bkey}")
     st.caption(t("map_note"))
+    click = (out or {}).get("last_clicked")
+    if click:
+        hit = next((f["building_id"] for f in faces if geo.contains(f["ring"], click["lng"], click["lat"])), None)
+        if hit is not None and hit != building:
+            st.session_state[bkey] = hit
+            st.rerun()
 
 kwp = sum(a["kwp"] for a in arrays)
 if kwp <= 0:
