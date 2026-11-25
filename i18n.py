@@ -29,10 +29,11 @@ TEXT = {
         "Enter your address or click a roof on the map: it is detected from the Swiss solar cadastre. "
         "Pick the roof faces to equip and get the estimated yearly production.",
     ),
-    "click_no_roof": ("Pas de toit à cet endroit. Zoomez et cliquez sur un bâtiment.",
-                      "Kein Dach an dieser Stelle. Zoomen Sie hinein und klicken Sie auf ein Gebäude.",
-                      "Nessun tetto in questo punto. Ingrandite e cliccate su un edificio.",
-                      "No roof here. Zoom in and click on a building."),
+    "click_no_roof": ("Pas de pan du cadastre solaire à cet endroit. Zoomez et cliquez sur un pan, ou dessinez-le avec l'outil « Dessiner un pan ».",
+        'Keine Fläche des Solarkatasters an dieser Stelle. Zoomen Sie hinein und klicken Sie auf eine Fläche, oder zeichnen Sie sie mit «Fläche zeichnen».',
+        'Nessuna falda del catasto solare in questo punto. Ingrandite e cliccate su una falda, oppure disegnatela con «Disegna falda».',
+        'No solar-cadastre face here. Zoom in and click a face, or draw it with the “Draw a face” tool.',
+    ),
     "mode_help": (
         "Simple : vous cochez les pans, l'app les remplit de panneaux. Détaillé : vous réglez vous-même les "
         "dimensions, l'inclinaison et l'orientation de chaque pan, et pouvez en ajouter.",
@@ -335,6 +336,12 @@ TEXT = {
         'Diese Fläche löschen',
         'Elimina questa falda',
         'Delete this face',
+    ),
+    "house_picked": (
+        "Maison choisie (contour jaune sur la carte) : {n} pans, {area} m² de toit au total.",
+        "Gewähltes Haus (gelbe Umrandung auf der Karte): {n} Flächen, insgesamt {area} m² Dach.",
+        "Casa scelta (contorno giallo sulla mappa): {n} falde, {area} m² di tetto in totale.",
+        "House picked (yellow outline on the map): {n} faces, {area} m² of roof in total.",
     ),
     "map_satellite": ("Satellite", "Satellit", "Satellite", "Satellite"),
     "map_plan": ("Plan", "Karte", "Mappa", "Map"),

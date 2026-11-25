@@ -220,7 +220,9 @@ def handle_click(out, tool) -> bool:
                                            "l": st.session_state.obst_l, "face_id": hit["id"],
                                            "kind": st.session_state.obst_kind})
         return True
-    obstacles = st.session_state.obstacles  # tool == "del" : le dernier posé qui contient le clic
+    if tool != "del":
+        return False
+    obstacles = st.session_state.obstacles  # le dernier posé qui contient le clic
     for ob in reversed(obstacles):
         if geo.contains(geo.obstacle_rect(store[ob["face_id"]], ob), c_lon, c_lat):
             obstacles.remove(ob)
@@ -324,6 +326,8 @@ with tool_slot:
     tool = st.segmented_control(t("tool"), ["house", "faces", "draw", "add", "del"],
                                 format_func=lambda k: tr(f"tool_{k}"), default="house", key="tool_sel",
                                 help=t("tool_help") + " " + t("draw_help")) or "house"
+if tool not in ("house", "faces", "draw", "add", "del"):  # valeur d'une ancienne session
+    tool = "house"
 with draw_slot:
     if tool == "draw":
         st.info(t("draw_steps"), icon=":material/draw:")
@@ -450,6 +454,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([t(f"step_{i}") for i in range(1, 6)], ke
 
 with tab1:
     st.caption(t("step1_note"))
+    house = [f for f in faces if f["building_id"] == ctx]
+    if house:
+        st.success(t("house_picked", n=len(house), area=f"{sum(f['area'] for f in house):.0f}"),
+                   icon=":material/home:")
     next_button(2, "faces")
 
 with tab3:
@@ -594,18 +602,19 @@ with map_slot:
     # Les couches qui bougent (pans, panneaux, obstacles) vont dans un groupe ajouté à la carte sans la
     # recréer : la vue ne bouge plus. La carte n'est recréée que si la maison change, ou pour effacer un
     # tracé (epoch) ; la vue courante est alors conservée.
-    fit_sig = tuple(shown)
+    fit_sig = (round(loc["lat"], 5), round(loc["lon"], 5), ctx)  # la maison affichée, pas les pans choisis
     state = (lang(), fit_sig, st.session_state.epoch, tool == "draw")
     prev = st.session_state.get("map_state")
     if prev != state:
         st.session_state.map_state = state
         st.session_state.base_view = st.session_state.get("live_view") if prev and prev[1] == fit_sig else None
     view = st.session_state.get("base_view")
-    pts = [(y, x) for f in faces if f["building_id"] in shown for x, y in f["ring"]]
+    pts = [(y, x) for f in faces if f["building_id"] == ctx for x, y in f["ring"]]
     bounds = [[min(p[0] for p in pts), min(p[1] for p in pts)],
-              [max(p[0] for p in pts), max(p[1] for p in pts)]] if pts and not view else None
-    fmap = base_map(view["center"] if view else [lat, lon], view["zoom"] if view else 20, draw=tool == "draw",
-                    bounds=bounds)
+              [max(p[0] for p in pts), max(p[1] for p in pts)]] if pts else None
+    center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2] if bounds else [lat, lon]
+    fmap = base_map(view["center"] if view else center, view["zoom"] if view else 20, draw=tool == "draw",
+                    bounds=None if view else bounds)
     dyn = folium.FeatureGroup(name="dyn", control=False)
     for f in faces:
         is_custom = f.get("custom", False)
@@ -615,8 +624,9 @@ with map_slot:
                f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}")
         folium.Polygon(
             [(y, x) for x, y in f["ring"]],
-            color=CUSTOM if is_custom else "#ffffff", weight=1.4 if mine else 0.6, fill=True, fill_color=fill,
-            fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.28, tooltip=tip,
+            color=CUSTOM if is_custom else "#ffffff" if f["building_id"] != ctx else "#ffe27a",
+            weight=(2.4 if f["building_id"] == ctx else 1.4) if mine else 0.5, fill=True, fill_color=fill,
+            fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.15, tooltip=tip,
             interactive=tool != "draw",
         ).add_to(dyn)
     for a in arrays if show else []:  # les panneaux, un rectangle chacun, posés après « Suivant »
