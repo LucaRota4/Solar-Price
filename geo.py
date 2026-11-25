@@ -130,3 +130,46 @@ def face_dimensions(face: dict) -> tuple[float, float]:
     return round(width, 1), round(length, 1)
 
 
+def panel_layout(face: dict, pw: float, pl: float, margin: float, gap: float = 0.02) -> list[list[list[float]]]:
+    """Panneaux posés en grille dans le contour réel du pan, en portrait ou en paysage (le plus
+    de panneaux des deux). Renvoie un contour [[lon, lat], ...] par panneau.
+
+    Repère du pan : s le long du faîte, d dans la pente (en projection au sol, d'où le
+    cos(inclinaison) sur la longueur des panneaux). Un panneau est gardé si ses quatre coins,
+    élargis de la marge, sont dans le contour.
+    """
+    ring = face["ring"]
+    lon0, lat0 = ring[0]
+    k = math.cos(math.radians(lat0)) * M_PER_DEG_LAT
+    a = math.radians(face["azimuth"])
+    u = (math.cos(a), -math.sin(a))  # le long du faîte
+    v = (-math.sin(a), -math.cos(a))  # dans la pente
+    pts = [((x - lon0) * k, (y - lat0) * M_PER_DEG_LAT) for x, y in ring]
+    poly = [(p[0] * u[0] + p[1] * u[1], p[0] * v[0] + p[1] * v[1]) for p in pts]
+    s_min, s_max = min(p[0] for p in poly), max(p[0] for p in poly)
+    d_min, d_max = min(p[1] for p in poly), max(p[1] for p in poly)
+    cos_t = math.cos(math.radians(face["tilt"]))
+    m_s, m_d = margin, margin * cos_t
+
+    def grid(ws, wd):  # ws, wd : taille du panneau le long du faîte et dans la pente (projetée)
+        ns = int((s_max - s_min - 2 * m_s + gap) // (ws + gap))
+        nd = int((d_max - d_min - 2 * m_d + gap * cos_t) // (wd + gap * cos_t))
+        s0 = s_min + (s_max - s_min - ns * (ws + gap) + gap) / 2  # grille centrée
+        d0 = d_min + (d_max - d_min - nd * (wd + gap * cos_t) + gap * cos_t) / 2
+        out = []
+        for i in range(max(ns, 0)):
+            for j in range(max(nd, 0)):
+                s, d = s0 + i * (ws + gap), d0 + j * (wd + gap * cos_t)
+                corners = [(s, d), (s + ws, d), (s + ws, d + wd), (s, d + wd)]
+                padded = [(s - m_s, d - m_d), (s + ws + m_s, d - m_d), (s + ws + m_s, d + wd + m_d),
+                          (s - m_s, d + wd + m_d)]
+                if all(contains(poly, ps, pd) for ps, pd in padded):
+                    out.append(corners)
+        return out
+
+    rects = max(grid(pw, pl * cos_t), grid(pl, pw * cos_t), key=len)
+    to_lonlat = lambda s, d: [lon0 + (s * u[0] + d * v[0]) / k,  # noqa: E731
+                              lat0 + (s * u[1] + d * v[1]) / M_PER_DEG_LAT]
+    return [[to_lonlat(s, d) for s, d in r] for r in rects]
+
+

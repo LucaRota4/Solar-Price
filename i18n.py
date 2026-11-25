@@ -20,20 +20,72 @@ TEXT = {
     "est_title": ("Production solaire de votre toit", "Solarproduktion Ihres Dachs",
                   "Produzione solare del vostro tetto", "Solar production of your roof"),
     "est_intro": (
-        "Entrez votre adresse : le toit est détecté automatiquement grâce au cadastre solaire suisse. "
+        "Entrez votre adresse ou cliquez sur un toit de la carte : il est détecté grâce au cadastre solaire suisse. "
         "Choisissez les pans à équiper et obtenez la production annuelle estimée.",
-        "Geben Sie Ihre Adresse ein: Das Dach wird über den Solarkataster der Schweiz automatisch erkannt. "
-        "Wählen Sie die Dachflächen aus und erhalten Sie die geschätzte Jahresproduktion.",
-        "Inserite il vostro indirizzo: il tetto viene rilevato automaticamente grazie al catasto solare svizzero. "
-        "Scegliete le falde da equipaggiare e ottenete la produzione annua stimata.",
-        "Enter your address: the roof is detected automatically from the Swiss solar cadastre. "
+        "Geben Sie Ihre Adresse ein oder klicken Sie auf ein Dach der Karte: Es wird über den Solarkataster der "
+        "Schweiz erkannt. Wählen Sie die Dachflächen aus und erhalten Sie die geschätzte Jahresproduktion.",
+        "Inserite il vostro indirizzo o cliccate su un tetto della mappa: viene rilevato grazie al catasto solare "
+        "svizzero. Scegliete le falde da equipaggiare e ottenete la produzione annua stimata.",
+        "Enter your address or click a roof on the map: it is detected from the Swiss solar cadastre. "
         "Pick the roof faces to equip and get the estimated yearly production.",
     ),
+    "click_no_roof": ("Pas de toit à cet endroit. Zoomez et cliquez sur un bâtiment.",
+                      "Kein Dach an dieser Stelle. Zoomen Sie hinein und klicken Sie auf ein Gebäude.",
+                      "Nessun tetto in questo punto. Ingrandite e cliccate su un edificio.",
+                      "No roof here. Zoom in and click on a building."),
+    "mode_help": (
+        "Simple : vous cochez les pans, l'app les remplit de panneaux. Détaillé : vous réglez vous-même les "
+        "dimensions, l'inclinaison et l'orientation de chaque pan, et pouvez en ajouter.",
+        "Einfach: Sie wählen die Flächen, die App belegt sie mit Modulen. Detailliert: Sie legen Masse, Neigung "
+        "und Ausrichtung jeder Fläche selbst fest und können Flächen hinzufügen.",
+        "Semplice: scegliete le falde, l'app le riempie di pannelli. Dettagliata: impostate voi dimensioni, "
+        "inclinazione e orientamento di ogni falda, e potete aggiungerne.",
+        "Simple: you tick the faces, the app fills them with panels. Detailed: you set the dimensions, tilt and "
+        "orientation of each face yourself, and can add faces.",
+    ),
+    "analysis_help": (
+        "De base : production d'une année moyenne (PVGIS, 2005-2023). Poussée : production année par année avec "
+        "la météo réelle de chaque année, jusqu'en {y}.",
+        "Basis: Produktion eines Durchschnittsjahrs (PVGIS, 2005-2023). Vertieft: Produktion Jahr für Jahr mit dem "
+        "effektiven Wetter jedes Jahres, bis {y}.",
+        "Di base: produzione di un anno medio (PVGIS, 2005-2023). Approfondita: produzione anno per anno con la "
+        "meteo reale di ogni anno, fino al {y}.",
+        "Basic: production of an average year (PVGIS, 2005-2023). Advanced: production year by year with each "
+        "year's actual weather, up to {y}.",
+    ),
+    "mode_simple_desc": ("Mode simple : cochez les pans, ils sont remplis de panneaux automatiquement.",
+                         "Einfacher Modus: Flächen wählen, sie werden automatisch mit Modulen belegt.",
+                         "Modalità semplice: scegliete le falde, vengono riempite di pannelli automaticamente.",
+                         "Simple mode: tick the faces, they are filled with panels automatically."),
+    "mode_detailed_desc": ("Mode détaillé : réglez vous-même chaque pan.",
+                           "Detaillierter Modus: Sie stellen jede Fläche selbst ein.",
+                           "Modalità dettagliata: impostate voi ogni falda.",
+                           "Detailed mode: you set each face yourself."),
+    "analysis_basic_desc": ("Analyse de base : une année moyenne (PVGIS 2005-2023).",
+                            "Basisanalyse: ein Durchschnittsjahr (PVGIS 2005-2023).",
+                            "Analisi di base: un anno medio (PVGIS 2005-2023).",
+                            "Basic analysis: an average year (PVGIS 2005-2023)."),
+    "analysis_advanced_desc": ("Analyse poussée : chaque année avec sa météo réelle, jusqu'en {y}.",
+                               "Vertiefte Analyse: jedes Jahr mit seinem effektiven Wetter, bis {y}.",
+                               "Analisi approfondita: ogni anno con la sua meteo reale, fino al {y}.",
+                               "Advanced analysis: each year with its actual weather, up to {y}."),
+    "panel_wp_help": ("Se met à jour quand vous changez la taille du panneau (≈ 221 Wc/m²). Vous pouvez ensuite "
+                      "l'ajuster : la taille, elle, ne change pas.",
+                      "Passt sich an, wenn Sie die Modulgrösse ändern (≈ 221 Wp/m²). Danach frei anpassbar: Die "
+                      "Grösse ändert sich dabei nicht.",
+                      "Si aggiorna quando cambiate la dimensione del pannello (≈ 221 Wp/m²). Potete poi "
+                      "modificarla: la dimensione non cambia.",
+                      "Updates when you change the panel size (≈ 221 Wp/m²). You can then adjust it: the size "
+                      "does not change."),
+    "margin_help": ("Distance libre entre les panneaux et le bord du pan.",
+                    "Freier Abstand zwischen Modulen und Dachrand.",
+                    "Distanza libera tra i pannelli e il bordo della falda.",
+                    "Free space between the panels and the edge of the face."),
     "address": ("Adresse", "Adresse", "Indirizzo", "Address"),
     "address_ph": ("Rue et numéro, NPA localité", "Strasse und Nummer, PLZ Ort", "Via e numero, NPA località",
                    "Street and number, postcode town"),
-    "address_start": ("Commencez par entrer une adresse en Suisse.", "Geben Sie zuerst eine Adresse in der Schweiz ein.",
-                      "Iniziate inserendo un indirizzo in Svizzera.", "Start by entering an address in Switzerland."),
+    "address_start": ("Entrez une adresse, ou zoomez sur la carte et cliquez sur un toit.", "Geben Sie eine Adresse ein oder zoomen Sie in die Karte und klicken Sie auf ein Dach.",
+                      "Inserite un indirizzo, o ingrandite la mappa e cliccate su un tetto.", "Enter an address, or zoom into the map and click a roof."),
     "address_none": ("Adresse introuvable. Vérifiez l'orthographe ou ajoutez le NPA.",
                      "Adresse nicht gefunden. Prüfen Sie die Schreibweise oder ergänzen Sie die PLZ.",
                      "Indirizzo non trovato. Verificate l'ortografia o aggiungete il NPA.",

@@ -122,38 +122,76 @@ st.markdown(f'<div class="eyebrow">{t("nav_estimate")}</div>', unsafe_allow_html
 st.title(t("est_title"))
 st.markdown(f'<p class="lead">{t("est_intro")}</p>', unsafe_allow_html=True)
 
-query = st.text_input(t("address"), placeholder=t("address_ph"), key="address")
-if not query.strip():
+def handle_click(out, faces) -> bool:
+    """Clic sur la carte : sélectionne le toit cliqué, déjà chargé ou non. True si la sélection change."""
+    click = (out or {}).get("last_clicked")
+    if not click:
+        return False
+    pos = (round(click["lat"], 7), round(click["lng"], 7))
+    if st.session_state.get("last_click") == pos:  # clic déjà traité lors d'une exécution précédente
+        return False
+    st.session_state.last_click = pos
+    c_lat, c_lon = pos
+    hit = next((f for f in faces if geo.contains(f["ring"], c_lon, c_lat)), None)
+    if hit is None:  # toit hors du périmètre chargé : on charge les toits autour du clic
+        try:
+            around = roofs(c_lat, c_lon)
+        except ApiError as e:
+            fail(e)
+        hit = next((f for f in around if geo.contains(f["ring"], c_lon, c_lat)), None)
+        if hit is None:
+            st.toast(t("click_no_roof"), icon=":material/roofing:")
+            return False
+        st.session_state.loc = {"lat": c_lat, "lon": c_lon}
+    st.session_state.building = hit["building_id"]
+    return True
+
+
+# Le lieu sélectionné vient de l'adresse tapée ou d'un clic sur un toit de la carte
+query = st.text_input(t("address"), placeholder=t("address_ph"), key="address").strip()
+if query:
+    try:
+        results = search(query)
+    except ApiError as e:
+        fail(e)
+    if not results:
+        st.warning(t("address_none"))
+    else:
+        addr = results[0] if len(results) == 1 else st.selectbox(t("address_found"), results,
+                                                                  format_func=lambda r: r["label"])
+        if st.session_state.get("addr_sig") != (query, addr["label"]):  # nouvelle adresse : on s'y place
+            st.session_state.addr_sig = (query, addr["label"])
+            st.session_state.loc = {"lat": addr["lat"], "lon": addr["lon"]}
+            st.session_state.building = None
+
+loc = st.session_state.get("loc")
+if not loc:
     st.info(t("address_start"), icon=":material/home_pin:")
-    st_folium(base_map(SWISS_CENTER, SWISS_ZOOM), height=MAP_HEIGHT, use_container_width=True, returned_objects=[])
+    out = st_folium(base_map(SWISS_CENTER, SWISS_ZOOM), height=MAP_HEIGHT, use_container_width=True,
+                    returned_objects=["last_clicked"], key="swissmap")
+    if handle_click(out, []):
+        st.rerun()
     st.stop()
+lat, lon = loc["lat"], loc["lon"]
 
 try:
-    results = search(query.strip())
-except ApiError as e:
-    fail(e)
-if not results:
-    st.warning(t("address_none"))
-    st.stop()
-addr = results[0] if len(results) == 1 else st.selectbox(t("address_found"), results, format_func=lambda r: r["label"])
-lat, lon = addr["lat"], addr["lon"]
-
-try:
-    faces = roofs(lat, lon)  # tous les toits dans le périmètre autour de l'adresse
+    faces = roofs(lat, lon)  # tous les toits dans le périmètre autour du lieu sélectionné
 except ApiError as e:
     fail(e)
 buildings = geo.buildings_by_distance(faces, lat, lon)
 
 tr = t_fixed()
 c1, c2, _ = st.columns([2, 2, 3], vertical_alignment="bottom")
-mode = c1.segmented_control(t("mode"), ["simple", "detailed"], format_func=tr, default="simple", key="mode") or "simple"
+mode = c1.segmented_control(t("mode"), ["simple", "detailed"], format_func=tr, default="simple", key="mode",
+                            help=t("mode_help")) or "simple"
 analysis = c2.segmented_control(t("analysis"), ["basic", "advanced"], format_func=tr, default="basic",
-                                key="analysis_mode") or "basic"
-# Bâtiment actif : celui à l'adresse, puis celui sur lequel on clique dans la carte
-bkey = f"building@{lat:.6f},{lon:.6f}"
-if bkey not in st.session_state:
-    st.session_state[bkey] = buildings[0] if buildings else None
-building = st.session_state[bkey]
+                                key="analysis_mode", help=t("analysis_help", y=pv.LAST_YEAR)) or "basic"
+st.caption(f"{t('mode_' + mode + '_desc')} {t('analysis_' + analysis + '_desc', y=pv.LAST_YEAR)}")
+
+# Bâtiment actif : celui sous le lieu sélectionné, ou celui sur lequel on a cliqué
+building = st.session_state.get("building")
+if building not in {f["building_id"] for f in faces}:
+    building = st.session_state.building = buildings[0] if buildings else None
 
 bfaces = [f for f in faces if f["building_id"] == building]
 if not bfaces:
@@ -162,16 +200,25 @@ if not bfaces:
 # Pans cochés par défaut : aptitude bonne ou mieux, sinon les meilleurs disponibles
 best = min(3, max((f["klasse"] for f in bfaces), default=3))
 
+# Panneau : la puissance suit la taille (densité de référence 430 Wc pour 1,72 × 1,13 m),
+# mais changer la puissance ne change pas la taille.
+REF_DENSITY = 430 / (1.72 * 1.13)  # Wc par m²
+for k, v in (("panel_wp", 430), ("panel_l", 1.72), ("panel_w", 1.13)):
+    st.session_state.setdefault(k, v)
+
+
+def size_changed():
+    wp = REF_DENSITY * st.session_state.panel_l * st.session_state.panel_w
+    st.session_state.panel_wp = int(min(800, max(100, round(wp / 5) * 5)))
+
+
 with st.expander(t("assumptions"), icon=":material/tune:"):
-    h1, h2, h3, h4 = st.columns(4)
+    h1, h2, h3, h4, h5 = st.columns(5)
     loss = h1.number_input(t("loss"), 0, 40, 14, help=t("loss_help"))
-    panel_wp = h2.number_input(t("panel_wp"), 100, 800, 430, step=10)
-    panel_l = h3.number_input(t("panel_l"), 0.5, 3.0, 1.72, step=0.01)
-    panel_w = h4.number_input(t("panel_w"), 0.5, 2.0, 1.13, step=0.01)
-    if mode == "simple":
-        usable = st.slider(t("usable"), 50, 100, 80, format="%d %%", help=t("usable_help"))
-    else:
-        margin = st.number_input(t("margin"), 0.0, 2.0, 0.3, step=0.1)
+    panel_wp = h2.number_input(t("panel_wp"), 100, 800, step=5, key="panel_wp", help=t("panel_wp_help"))
+    panel_l = h3.number_input(t("panel_l"), 0.5, 3.0, step=0.01, key="panel_l", on_change=size_changed)
+    panel_w = h4.number_input(t("panel_w"), 0.5, 2.0, step=0.01, key="panel_w", on_change=size_changed)
+    margin = h5.number_input(t("margin"), 0.0, 2.0, 0.3, step=0.1, help=t("margin_help"))
 
 map_slot = st.container()
 
@@ -188,12 +235,11 @@ if mode == "simple":
     )
     edited = st.data_editor(table, hide_index=True, width="stretch", key=f"simple-{building}-{lang()}",
                             disabled=cols[1:])
-    density = panel_wp / 1000 / (panel_l * panel_w)  # kWc par m² de panneaux
     for f, on in zip(bfaces, edited[cols[0]]):
-        if on:
-            m2 = f["area"] * usable / 100
-            arrays.append({"tilt": f["tilt"], "azimuth": f["azimuth"], "kwp": m2 * density,
-                           "panels": math.floor(m2 / (panel_l * panel_w)), "face_id": f["id"]})
+        if on:  # le pan est rempli de panneaux dans son contour réel, marges comprises
+            layout = geo.panel_layout(f, panel_w, panel_l, margin)
+            arrays.append({"tilt": f["tilt"], "azimuth": f["azimuth"], "kwp": len(layout) * panel_wp / 1000,
+                           "panels": len(layout), "face_id": f["id"], "layout": layout})
 else:
     st.subheader(t("faces"))
     st.caption(t("faces_detail_note"))
@@ -217,11 +263,15 @@ else:
             "face_id": None,
         },
     )
+    by_id = {f["id"]: f for f in bfaces}
     for _, r in edited.dropna(subset=[wid, lng, tilt, ori]).iterrows():
         if r[inc]:
             n = fit_panels(r[wid], r[lng], panel_w, panel_l, margin)
+            # Sur la carte : la disposition dans le contour réel, limitée au nombre calculé
+            f = by_id.get(r["face_id"])
+            layout = geo.panel_layout(f, panel_w, panel_l, margin)[:n] if f else []
             arrays.append({"tilt": r[tilt], "azimuth": r[ori], "kwp": n * panel_wp / 1000, "panels": n,
-                           "face_id": r["face_id"]})
+                           "face_id": r["face_id"], "layout": layout})
 
 # ---- Carte : vue aérienne swisstopo, affichée au-dessus des tableaux --------------------------
 with map_slot:
@@ -233,24 +283,22 @@ with map_slot:
         folium.Polygon(
             [(y, x) for x, y in f["ring"]],
             color="#ffffff", weight=1.4 if mine else 0.6, fill=True, fill_color=fill,
-            fill_opacity=(0.85 if f["id"] in equipped else 0.6) if mine else 0.28,
+            fill_opacity=(0.3 if f["id"] in equipped else 0.6) if mine else 0.28,
             tooltip=f"{orientation(f['azimuth'])} · {f['tilt']:.0f}° · {f['area']:.0f} m² · {klass(f['klasse'])}",
         ).add_to(fmap)
-    folium.CircleMarker([lat, lon], radius=6, color="#ffffff", weight=2, fill=True, fill_color="#e4572e",
-                        fill_opacity=1).add_to(fmap)
+    for a in arrays:  # les panneaux, un rectangle chacun
+        for rect in a.get("layout", []):
+            folium.Polygon([(y, x) for x, y in rect], color="#9cc3f5", weight=0.6, fill=True,
+                           fill_color="#16233a", fill_opacity=0.92, interactive=False).add_to(fmap)
     if bfaces:
         pts = [(y, x) for f in bfaces for x, y in f["ring"]]
         fmap.fit_bounds([[min(p[0] for p in pts), min(p[1] for p in pts)],
                          [max(p[0] for p in pts), max(p[1] for p in pts)]], padding=(30, 30))
     out = st_folium(fmap, height=MAP_HEIGHT, use_container_width=True, returned_objects=["last_clicked"],
-                    key=f"map-{bkey}")
+                    key="roofmap")
     st.caption(t("map_note"))
-    click = (out or {}).get("last_clicked")
-    if click:
-        hit = next((f["building_id"] for f in faces if geo.contains(f["ring"], click["lng"], click["lat"])), None)
-        if hit is not None and hit != building:
-            st.session_state[bkey] = hit
-            st.rerun()
+    if handle_click(out, faces):
+        st.rerun()
 
 kwp = sum(a["kwp"] for a in arrays)
 if kwp <= 0:
